@@ -1,0 +1,695 @@
+@{
+    ViewData["Title"] = "DRB - Container Load Planner";
+    Layout = "~/Views/Shared/_LayoutCargo.cshtml";
+}
+
+<!-- NAVBAR -->
+<nav class="navbar">
+    <div class="logo">
+        <img src="@Url.Content("~/images/logo.png")" alt="Logo" style="height:44px;width:auto;object-fit:contain;" />
+    </div>
+    <div class="nav-title">
+        <div class="nav-title-text">HỆ THỐNG SẮP XẾP VỊ TRÍ CONTAINER</div>
+    </div>
+    <div class="nav-actions">
+<button class="btn btn-outline" onclick="resetAll()"><i class="fas fa-redo"></i> Reset</button>
+        <button class="btn btn-outline" id="btn-rotate" onclick="toggleAutoRotate()" title="Tự xoay 360°"><i class="fas fa-sync-alt"></i> Auto Rotate</button>
+        <button class="btn btn-optimize" onclick="optimizePacking()"><i class="fas fa-magic"></i> Tối ưu</button>
+        <button class="btn btn-success" onclick="calculatePacking()"><i class="fas fa-calculator"></i> Tính toán</button>
+        <button class="btn btn-primary" onclick="exportPlan()"><i class="fas fa-file-export"></i> Export</button>
+    </div>
+</nav>
+
+<!-- MAIN APP -->
+<!-- Backdrop cho mobile drawer -->
+<div class="drawer-backdrop" id="drawer-backdrop" onclick="closeAllDrawers()"></div>
+
+<!-- Modal thư viện Pallet (chọn & quản lý) -->
+<div class="ct-modal-overlay" id="pallet-library-modal" onclick="if(event.target===this)closePalletLibrary()">
+    <div class="ct-modal" style="width:580px;">
+        <div class="ct-modal-header">
+            <span><i class="fas fa-database"></i> Thư viện Pallet</span>
+            <div style="display:flex;gap:8px;align-items:center;">
+                <button class="c-btn-edit" style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;font-size:14px;border-radius:7px;" onclick="openAddPalletModal()" title="Thêm mới"><i class="fas fa-plus"></i></button>
+                <button class="ct-modal-close" onclick="closePalletLibrary()"><i class="fas fa-times"></i></button>
+            </div>
+        </div>
+        <div class="ct-modal-body" style="padding:12px;">
+            <div id="pallet-library-list" style="display:flex;flex-direction:column;gap:6px;max-height:420px;overflow-y:auto;"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal thêm/sửa Pallet Type -->
+<div class="ct-modal-overlay" id="pallet-type-modal" onclick="if(event.target===this)closePalletModal()">
+    <div class="ct-modal" style="width:480px;">
+        <div class="ct-modal-header">
+            <span id="pt-modal-title">Thêm Pallet</span>
+            <button class="ct-modal-close" onclick="closePalletModal()"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="ct-modal-body">
+            <input type="hidden" id="pt-id" />
+            <div class="ct-row">
+                <div class="ct-field">
+                    <label>Code <span class="req">*</span></label>
+                    <input type="text" id="pt-code" class="input-dark" placeholder="vd: euro" maxlength="50" />
+                </div>
+                <div class="ct-field">
+                    <label>Tên <span class="req">*</span></label>
+                    <input type="text" id="pt-name" class="input-dark" placeholder="vd: Euro Pallet" maxlength="100" />
+                </div>
+            </div>
+            <div class="ct-row">
+                <div class="ct-field">
+                    <label>Dài (cm)</label>
+                    <input type="number" id="pt-length" class="input-dark" placeholder="120" min="1" />
+                </div>
+                <div class="ct-field">
+                    <label>Rộng (cm)</label>
+                    <input type="number" id="pt-width" class="input-dark" placeholder="80" min="1" />
+                </div>
+                <div class="ct-field">
+                    <label>Cao (cm)</label>
+                    <input type="number" id="pt-height" class="input-dark" placeholder="144" min="1" />
+                </div>
+            </div>
+            <div class="ct-row">
+                <div class="ct-field">
+                    <label>Khối lượng (kg)</label>
+                    <input type="number" id="pt-weight" class="input-dark" placeholder="500" min="0" />
+                </div>
+                <div class="ct-field">
+                    <label>Màu sắc</label>
+                    <input type="color" id="pt-color" class="input-dark" value="#F39C12" style="height:36px;padding:2px 4px;cursor:pointer;" />
+                </div>
+                <div class="ct-field">
+                    <label>Thứ tự</label>
+                    <input type="number" id="pt-sort" class="input-dark" placeholder="1" min="0" />
+                </div>
+            </div>
+        </div>
+        <div class="ct-modal-footer">
+            <button class="btn-secondary" onclick="closePalletModal()">Hủy</button>
+            <button class="btn-primary" onclick="savePalletModal()"><i class="fas fa-save"></i> Lưu</button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal thêm/sửa Container Type -->
+<div class="ct-modal-overlay" id="container-modal" onclick="if(event.target===this)closeContainerModal()">
+    <div class="ct-modal">
+        <div class="ct-modal-header">
+            <span id="ct-modal-title">Thêm Container</span>
+            <button class="ct-modal-close" onclick="closeContainerModal()"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="ct-modal-body">
+            <input type="hidden" id="ct-id" />
+            <div class="ct-row">
+                <div class="ct-field">
+                    <label>Code <span class="req">*</span></label>
+                    <input type="text" id="ct-code" class="input-dark" placeholder="vd: 20ft" maxlength="50" />
+                </div>
+                <div class="ct-field">
+                    <label>Tên <span class="req">*</span></label>
+                    <input type="text" id="ct-name" class="input-dark" placeholder="vd: 20ft Standard" maxlength="100" />
+                </div>
+            </div>
+            <div class="ct-row">
+                <div class="ct-field">
+                    <label>Dài (cm)</label>
+                    <input type="number" id="ct-length" class="input-dark" placeholder="585" min="1" />
+                </div>
+                <div class="ct-field">
+                    <label>Rộng (cm)</label>
+                    <input type="number" id="ct-width" class="input-dark" placeholder="235" min="1" />
+                </div>
+                <div class="ct-field">
+                    <label>Cao (cm)</label>
+                    <input type="number" id="ct-height" class="input-dark" placeholder="228" min="1" />
+                </div>
+            </div>
+            <div class="ct-row">
+                <div class="ct-field">
+                    <label>Tải trọng tối đa (kg)</label>
+                    <input type="number" id="ct-weight" class="input-dark" placeholder="28200" min="0" />
+                </div>
+                <div class="ct-field">
+                    <label>Icon (HTML entity)</label>
+                    <input type="text" id="ct-icon" class="input-dark" placeholder="&#x1F4E6;" />
+                </div>
+                <div class="ct-field">
+                    <label>Thứ tự</label>
+                    <input type="number" id="ct-sort" class="input-dark" placeholder="1" min="0" />
+                </div>
+            </div>
+        </div>
+        <div class="ct-modal-footer">
+            <button class="btn-secondary" onclick="closeContainerModal()">Hủy</button>
+            <button class="btn-primary" onclick="saveContainerModal()"><i class="fas fa-save"></i> Lưu</button>
+        </div>
+    </div>
+</div>
+
+<!-- Flyout panel khi sidebar thu nhỏ -->
+<div class="sidebar-flyout" id="sidebar-flyout">
+    <div class="flyout-title" id="flyout-title"></div>
+    <div id="flyout-content"></div>
+</div>
+
+<div class="app-container">
+
+    <!-- LEFT PANEL -->
+    <div class="left-panel" id="left-panel">
+        <div class="panel-tabs">
+            <div class="tab active" onclick="switchTab('container')" title="Container"><i class="fas fa-box"></i><span class="tab-label">Container</span></div>
+            <div class="tab" onclick="switchTab('import')" title="Import"><i class="fas fa-file-import"></i><span class="tab-label">Import</span></div>
+            <div class="tab" onclick="switchTab('cargo')" title="Thêm"><i class="fas fa-plus"></i><span class="tab-label">Thêm</span></div>
+            <div class="tab" onclick="switchTab('list')" title="Danh sách">
+                <i class="fas fa-list"></i><span class="tab-label"> DS</span>
+                <span id="item-count" class="tab-badge">0</span>
+            </div>
+            <div class="tab panel-collapse-btn" onclick="toggleLeftPanel()" id="left-toggle-btn" title="Thu/mở">
+                <i class="fas fa-chevron-left" id="left-toggle-icon"></i>
+            </div>
+        </div>
+
+        <!-- IMPORT TAB -->
+        <div class="panel-content tab-pane" id="tab-import">
+            <div class="import-header">
+                <div class="section-title mb-0"><i class="fas fa-boxes"></i> Danh sách pallet</div>
+                <div style="display:flex;gap:6px;">
+                    <button class="btn btn-outline btn-sm" onclick="openPalletLibrary()" title="Chọn từ thư viện">
+                        <i class="fas fa-database"></i> Thư viện
+                    </button>
+                    <button class="btn btn-outline btn-sm" onclick="addImportRow()" title="Thêm dòng">
+                        <i class="fas fa-plus"></i>
+                    </button>
+                </div>
+            </div>
+
+            <div id="import-rows" class="import-rows-list"></div>
+
+            <!-- Cài đặt multi-container -->
+            <div class="import-settings-box">
+                <div class="import-settings-title"><i class="fas fa-layer-group"></i> Cài đặt container</div>
+                <div class="settings-grid">
+                    <div>
+                        <div class="dim-label">Loại container</div>
+                        <select id="import-container-type" class="input-dark" onchange="onImportContainerChange()">
+                            <!-- Được điền động từ API -->
+                        </select>
+                    </div>
+                    <div>
+                        <div class="dim-label">Số container</div>
+                        <input type="number" id="import-container-count" value="8" min="1" max="50" class="input-dark input-bold">
+                    </div>
+                    <div class="span-full">
+                        <div class="import-container-specs" id="import-container-specs" style="display:none;">
+                            <span id="ics-dim"></span>
+                            <span id="ics-vol"></span>
+                            <span id="ics-wt"></span>
+                        </div>
+                    </div>
+                    <div class="span-full">
+                        <div class="dim-label">Tải trọng tối đa / container (kg)</div>
+                        <input type="number" id="import-max-weight" value="19000" min="1000" step="500" class="input-dark input-bold input-accent">
+                    </div>
+                </div>
+            </div>
+
+            <div class="import-btn-row">
+                <button class="add-btn add-btn-multi" onclick="importMultiContainer()">
+                    <i class="fas fa-layer-group"></i> Tính theo số lượng
+                </button>
+                <button class="add-btn add-btn-auto" onclick="importAutoContainer()">
+                    <i class="fas fa-magic"></i> Tự động tối ưu
+                </button>
+            </div>
+            <div id="import-summary" class="import-summary" style="display:none;"></div>
+        </div>
+
+        <!-- CONTAINER TAB -->
+        <div class="panel-content tab-pane active" id="tab-container">
+            <div class="section-title"><i class="fas fa-ship"></i> Select Container Type</div>
+            <div class="container-grid" id="container-grid"></div>
+
+            <div class="section-title mt-16"><i class="fas fa-info-circle"></i> Container Specs</div>
+            <div class="specs-box">
+                <div id="spec-content"></div>
+            </div>
+        </div>
+
+        <!-- CARGO TAB -->
+        <div class="panel-content tab-pane" id="tab-cargo">
+            <div class="section-title"><i class="fas fa-plus-circle"></i> Add Cargo Item</div>
+            <div class="form-group">
+                <label>Item Name</label>
+                <input type="text" id="item-name" placeholder="e.g. Cardboard Box" />
+            </div>
+            <div class="form-group">
+                <label>Dimensions (cm)</label>
+                <div class="form-row">
+                    <div><label>Length</label><input type="number" id="item-l" placeholder="100" min="1" /></div>
+                    <div><label>Width</label><input type="number" id="item-w" placeholder="80" min="1" /></div>
+                    <div><label>Height</label><input type="number" id="item-h" placeholder="60" min="1" /></div>
+                </div>
+            </div>
+            <div class="form-row-2">
+                <div class="form-group">
+                    <label>Weight (kg)</label>
+                    <input type="number" id="item-weight" placeholder="25" min="0" />
+                </div>
+                <div class="form-group">
+                    <label>Quantity</label>
+                    <input type="number" id="item-qty" value="1" min="1" max="999" />
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Color</label>
+                <div class="color-row" id="color-picker">
+                    <div class="color-dot active" style="background:#E74C3C" data-color="#E74C3C"></div>
+                    <div class="color-dot" style="background:#3498DB" data-color="#3498DB"></div>
+                    <div class="color-dot" style="background:#2ECC71" data-color="#2ECC71"></div>
+                    <div class="color-dot" style="background:#F39C12" data-color="#F39C12"></div>
+                    <div class="color-dot" style="background:#9B59B6" data-color="#9B59B6"></div>
+                    <div class="color-dot" style="background:#1ABC9C" data-color="#1ABC9C"></div>
+                    <div class="color-dot" style="background:#E67E22" data-color="#E67E22"></div>
+                    <div class="color-dot" style="background:#34495E" data-color="#34495E"></div>
+                    <div class="color-dot" style="background:#E91E63" data-color="#E91E63"></div>
+                    <div class="color-dot" style="background:#00BCD4" data-color="#00BCD4"></div>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Description (optional)</label>
+                <input type="text" id="item-desc" placeholder="Notes..." />
+            </div>
+            <button class="add-btn" onclick="addCargoItem()"><i class="fas fa-plus"></i> Add to Load</button>
+
+            <div class="section-title mt-20"><i class="fas fa-magic"></i> Quick Presets</div>
+            <div class="preset-grid">
+                <button class="btn btn-outline btn-preset" onclick="addPreset('pallet')">📦 Euro Pallet</button>
+                <button class="btn btn-outline btn-preset" onclick="addPreset('drum')">🛢️ Drum 200L</button>
+                <button class="btn btn-outline btn-preset" onclick="addPreset('box')">📫 Small Box</button>
+                <button class="btn btn-outline btn-preset" onclick="addPreset('bag')">🎒 Big Bag</button>
+            </div>
+        </div>
+
+        <!-- LIST TAB -->
+        <div class="panel-content tab-pane" id="tab-list">
+            <div class="list-header">
+                <div class="section-title mb-0"><i class="fas fa-list-ul"></i> Cargo List</div>
+                <button class="btn btn-danger" onclick="clearAll()">Clear All</button>
+            </div>
+            <div class="cargo-list" id="cargo-list">
+                <div class="empty-state">
+                    <i class="fas fa-inbox"></i>
+                    <p>No items yet.<br>Go to "Add Cargo" tab to add items.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 3D VIEWER -->
+    <div class="viewer-container">
+
+        <!-- MULTI-CONTAINER NAVIGATOR -->
+        <div id="multi-nav" class="multi-nav">
+            <div class="multi-nav-inner">
+                <button onclick="navContainer(-1)" class="nav-ctrl-btn">&#8592;</button>
+                <div id="multi-nav-label" class="multi-nav-label">Container 1 / 8</div>
+                <button onclick="navContainer(1)" class="nav-ctrl-btn">&#8594;</button>
+                <div id="multi-nav-tabs" class="multi-nav-tabs"></div>
+                <div class="multi-nav-actions">
+                    <div id="multi-nav-info" class="multi-nav-info"></div>
+                    <button onclick="toggleOverviewMode()" id="btn-overview" class="nav-action-btn nav-action-primary">
+                        <i class="fas fa-th"></i> Tổng quan
+                    </button>
+                    <button onclick="toggleDetailPanel()" id="btn-detail" class="nav-action-btn">
+                        <i class="fas fa-table"></i> Chi tiết
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- OVERVIEW GRID -->
+        <div id="overview-grid" class="overview-grid" style="display:none;">
+            <div class="overview-header">
+                <span id="overview-title" class="overview-title-text"></span>
+                <button class="nav-action-btn" onclick="toggleOverviewMode()" style="margin-left:auto;">
+                    <i class="fas fa-times"></i> Đóng
+                </button>
+            </div>
+            <div id="overview-cards" class="overview-cards"></div>
+        </div>
+
+        <!-- DETAIL TABLE PANEL -->
+        <div id="detail-panel" class="detail-panel">
+            <div id="detail-table-content"></div>
+        </div>
+
+        <canvas id="three-canvas"></canvas>
+
+        <!-- TOOLBAR -->
+        <div class="viewer-overlay">
+            <button class="viewer-btn" onclick="resetCamera()" title="Reset View"><i class="fas fa-home"></i></button>
+            <button class="viewer-btn" onclick="toggleWireframe()" title="Wireframe"><i class="fas fa-border-all"></i></button>
+            <button class="viewer-btn" onclick="toggleLabels()" title="Labels"><i class="fas fa-tag"></i></button>
+            <button class="viewer-btn" onclick="zoomIn()" title="Zoom In"><i class="fas fa-plus"></i></button>
+            <button class="viewer-btn" onclick="zoomOut()" title="Zoom Out"><i class="fas fa-minus"></i></button>
+        </div>
+
+        <!-- VIEW BUTTONS -->
+        <div class="view-controls">
+            <button class="view-btn active" onclick="setView('perspective')">3D Perspective</button>
+            <button class="view-btn" onclick="setView('front')">Front</button>
+            <button class="view-btn" onclick="setView('top')">Top</button>
+            <button class="view-btn" onclick="setView('side')">Side</button>
+        </div>
+
+        <!-- LOADING OVERLAY -->
+        <div class="loading-overlay" id="loading">
+            <div class="spinner"></div>
+            <div class="loading-text">Calculating optimal loading plan...</div>
+        </div>
+
+        <!-- TOOLTIP -->
+        <div class="tooltip-box" id="tooltip">
+            <div class="tooltip-name" id="tooltip-name"></div>
+            <div class="tooltip-info" id="tooltip-info"></div>
+        </div>
+    </div>
+
+    <!-- STATS PANEL -->
+    <div class="stats-panel" id="stats-panel" style="display:none">
+        <div class="section-title"><i class="fas fa-chart-bar"></i> Statistics</div>
+
+        <div class="stat-card">
+            <div class="stat-label">Volume Utilization</div>
+            <div><span class="stat-value" id="stat-vol">0</span><span class="stat-unit">%</span></div>
+            <div class="progress-bar"><div class="progress-fill progress-vol" id="prog-vol" style="width:0%"></div></div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-label">Weight Utilization</div>
+            <div><span class="stat-value" id="stat-wt">0</span><span class="stat-unit">%</span></div>
+            <div class="progress-bar"><div class="progress-fill progress-wt" id="prog-wt" style="width:0%"></div></div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-label">Total Items Packed</div>
+            <div><span class="stat-value" id="stat-items">0</span><span class="stat-unit"> pcs</span></div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-label">Total Weight</div>
+            <div><span class="stat-value" id="stat-weight">0</span><span class="stat-unit"> kg</span></div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-label">Volume Used</div>
+            <div><span class="stat-value" id="stat-volume">0</span><span class="stat-unit"> m³</span></div>
+        </div>
+
+        <div id="weight-balance-panel" style="display:none;margin-bottom:12px;"></div>
+
+        <div id="wood-stat" style="display:none;font-size:12px;color:#c8a97a;background:rgba(139,94,60,.15);border:1px solid rgba(139,94,60,.35);border-radius:7px;padding:7px 11px;margin-bottom:10px;"></div>
+
+        <div id="wood-btn-wrap" style="display:none;margin-bottom:10px;">
+            <button onclick="fillWoodDunnage()" id="btn-fill-wood"
+                style="width:100%;padding:9px 0;border-radius:8px;border:1px solid rgba(139,94,60,.5);background:rgba(139,94,60,.18);color:#c8a97a;font-size:12px;font-weight:700;cursor:pointer;letter-spacing:.5px;transition:background .2s;">
+                <i class="fas fa-tree"></i> Xếp gỗ chèn khoảng trống
+            </button>
+        </div>
+
+        <div class="section-title mt-16"><i class="fas fa-palette"></i> Legend</div>
+        <div id="legend" class="legend-list">
+            <div class="stats-empty-state">
+                <i class="fas fa-calculator"></i>
+                <p>Bấm <strong>Tính toán</strong> để xem kết quả</p>
+            </div>
+        </div>
+
+        <div id="optimize-result" class="optimize-result" style="display:none;">
+            <div class="section-title optimize-title"><i class="fas fa-magic"></i> Số lượng tối ưu</div>
+            <div id="optimize-list" class="optimize-list"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function() {
+    const leftPanel = document.getElementById('left-panel');
+
+    function triggerResize() {
+        if (window.resizeRenderer) window.resizeRenderer();
+        setTimeout(() => { if (window.resizeRenderer) window.resizeRenderer(); }, 280);
+    }
+
+    function syncPanelToScreen() {
+        // So sánh với document width thực tế, không dùng window.innerWidth (bị ảnh hưởng bởi zoom)
+        const w = document.documentElement.clientWidth;
+        const small = w <= 1100;
+        const icon  = document.getElementById('left-toggle-icon');
+        if (small && !leftPanel.classList.contains('collapsed')) {
+            leftPanel.classList.add('collapsed');
+            if (icon) icon.className = 'fas fa-chevron-right';
+            triggerResize();
+        } else if (!small && leftPanel.classList.contains('collapsed')) {
+            leftPanel.classList.remove('collapsed');
+            if (icon) icon.className = 'fas fa-chevron-left';
+            triggerResize();
+        }
+    }
+
+    syncPanelToScreen();
+    let _resizeTimer;
+    window.addEventListener('resize', () => {
+        clearTimeout(_resizeTimer);
+        _resizeTimer = setTimeout(syncPanelToScreen, 100);
+    });
+    window.addEventListener('orientationchange', () => setTimeout(syncPanelToScreen, 200));
+
+    window.toggleLeftPanel = function() {
+        const willCollapse = !leftPanel.classList.contains('collapsed');
+        leftPanel.classList.toggle('collapsed', willCollapse);
+        const icon = document.getElementById('left-toggle-icon');
+        if (icon) icon.className = willCollapse ? 'fas fa-chevron-right' : 'fas fa-chevron-left';
+        triggerResize();
+    };
+
+    window.closeAllDrawers = function() {
+        leftPanel.classList.add('collapsed');
+        const icon = document.getElementById('left-toggle-icon');
+        if (icon) icon.className = 'fas fa-chevron-right';
+        if (window._closeFlyout) window._closeFlyout();
+        triggerResize();
+    };
+
+})();
+</script>
+
+@section Scripts {
+<script src="~/js/cargo-planner.js"></script>
+<script>
+// Cập nhật specs khi chọn container type trong tab Import
+function onImportContainerChange() {
+    const code = document.getElementById('import-container-type').value;
+    const c    = CONTAINERS[code];
+    const box  = document.getElementById('import-container-specs');
+    if (!c || !box) return;
+
+    const vol = (c.length * c.width * c.height / 1e6).toFixed(1);
+    document.getElementById('ics-dim').textContent = `📐 ${c.length}×${c.width}×${c.height} cm`;
+    document.getElementById('ics-vol').textContent = `📦 ${vol} m³`;
+    document.getElementById('ics-wt').textContent  = `⚖️ ${c.maxWeight.toLocaleString()} kg`;
+    box.style.display = '';
+
+    // Tự điền tải trọng tối đa theo container
+    document.getElementById('import-max-weight').value = c.maxWeight;
+}
+
+// ==================== PALLET TYPE CRUD ====================
+window._palletTypes = [];
+
+async function loadPalletTypes() {
+    const res = await fetch('/api/pallet-types');
+    window._palletTypes = await res.json();
+}
+
+function openPalletLibrary() {
+    loadPalletTypes().then(renderPalletLibrary);
+    document.getElementById('pallet-library-modal').classList.add('show');
+}
+
+function closePalletLibrary() {
+    document.getElementById('pallet-library-modal').classList.remove('show');
+}
+
+function renderPalletLibrary() {
+    const list = document.getElementById('pallet-library-list');
+    list.innerHTML = '';
+    if (!window._palletTypes.length) {
+        list.innerHTML = '<div style="text-align:center;color:#718096;padding:32px 0;"><i class="fas fa-box-open" style="font-size:32px;margin-bottom:10px;display:block;"></i>Chưa có pallet nào</div>';
+        return;
+    }
+    window._palletTypes.forEach(p => {
+        const row = document.createElement('div');
+        row.className = 'pallet-lib-row';
+        row.innerHTML = `
+            <div class="pallet-lib-left">
+                <div class="pallet-lib-badge" style="background:${p.color}"></div>
+                <div class="pallet-lib-info">
+                    <div class="pallet-lib-name">${p.name}</div>
+                    <div class="pallet-lib-dims">
+                        <span><i class="fas fa-ruler-combined"></i> ${p.length}×${p.width}×${p.height} cm</span>
+                        <span><i class="fas fa-weight-hanging"></i> ${p.weight} kg</span>
+                    </div>
+                </div>
+            </div>
+            <div class="pallet-lib-right">
+                <div class="pallet-lib-qty-wrap">
+                    <span class="pallet-lib-qty-label">SL</span>
+                    <input type="number" class="pallet-lib-qty" value="1" min="1" max="9999" />
+                </div>
+                <button class="pallet-lib-btn-add" onclick="addPalletToImport(${p.id}, this)" title="Thêm vào danh sách">
+                    <i class="fas fa-plus"></i>
+                </button>
+                <div class="pallet-lib-edit-del">
+                    <button class="c-btn-edit" onclick="openEditPalletModal(${p.id})" title="Sửa"><i class="fas fa-edit"></i></button>
+                    <button class="c-btn-del"  onclick="deletePalletType(${p.id})"    title="Xóa"><i class="fas fa-trash"></i></button>
+                </div>
+            </div>`;
+        list.appendChild(row);
+    });
+}
+
+function addPalletToImport(id, btn) {
+    const p = window._palletTypes.find(x => x.id === id);
+    if (!p) return;
+    const qtyInput = btn.closest('.pallet-lib-row').querySelector('.pallet-lib-qty');
+    const qty = Math.max(1, parseInt(qtyInput?.value) || 1);
+    addImportRow(p.name, p.length, p.width, p.height, p.weight, qty, p.color);
+    closePalletLibrary();
+}
+
+function openAddPalletModal() {
+    document.getElementById('pt-modal-title').textContent = 'Thêm Pallet';
+    document.getElementById('pt-id').value     = '';
+    document.getElementById('pt-code').value   = '';
+    document.getElementById('pt-name').value   = '';
+    document.getElementById('pt-length').value = '';
+    document.getElementById('pt-width').value  = '';
+    document.getElementById('pt-height').value = '';
+    document.getElementById('pt-weight').value = '';
+    document.getElementById('pt-color').value  = '#F39C12';
+    document.getElementById('pt-sort').value   = window._palletTypes.length + 1;
+    document.getElementById('pt-code').disabled = false;
+    document.getElementById('pallet-type-modal').classList.add('show');
+}
+
+function openEditPalletModal(id) {
+    const p = window._palletTypes.find(x => x.id === id);
+    if (!p) return;
+    document.getElementById('pt-modal-title').textContent = 'Sửa Pallet';
+    document.getElementById('pt-id').value     = p.id;
+    document.getElementById('pt-code').value   = p.code;
+    document.getElementById('pt-name').value   = p.name;
+    document.getElementById('pt-length').value = p.length;
+    document.getElementById('pt-width').value  = p.width;
+    document.getElementById('pt-height').value = p.height;
+    document.getElementById('pt-weight').value = p.weight;
+    document.getElementById('pt-color').value  = p.color;
+    document.getElementById('pt-sort').value   = p.sortOrder;
+    document.getElementById('pt-code').disabled = true;
+    document.getElementById('pallet-type-modal').classList.add('show');
+}
+
+function closePalletModal() {
+    document.getElementById('pallet-type-modal').classList.remove('show');
+}
+
+async function savePalletModal() {
+    const id = parseInt(document.getElementById('pt-id').value) || 0;
+    const payload = {
+        id,
+        code:      document.getElementById('pt-code').value.trim(),
+        name:      document.getElementById('pt-name').value.trim(),
+        length:    parseFloat(document.getElementById('pt-length').value) || 0,
+        width:     parseFloat(document.getElementById('pt-width').value)  || 0,
+        height:    parseFloat(document.getElementById('pt-height').value) || 0,
+        weight:    parseFloat(document.getElementById('pt-weight').value) || 0,
+        color:     document.getElementById('pt-color').value,
+        sortOrder: parseInt(document.getElementById('pt-sort').value) || 0,
+        isActive:  true
+    };
+    if (!payload.code || !payload.name) { alert('Vui lòng nhập Code và Tên.'); return; }
+    const method = id ? 'PUT' : 'POST';
+    const url    = id ? `/api/pallet-types/${id}` : '/api/pallet-types';
+    try {
+        const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        if (!res.ok) { alert('Lỗi lưu: ' + res.status); return; }
+        closePalletModal();
+        await loadPalletTypes();
+        renderPalletLibrary();
+    } catch (e) { alert('Lỗi kết nối: ' + e.message); }
+}
+
+async function deletePalletType(id) {
+    const p = window._palletTypes.find(x => x.id === id);
+    if (!p || !confirm(`Xóa pallet "${p.name}"?`)) return;
+    try {
+        const res = await fetch(`/api/pallet-types/${id}`, { method: 'DELETE' });
+        if (!res.ok && res.status !== 204) { alert('Lỗi xóa: ' + res.status); return; }
+        await loadPalletTypes();
+        renderPalletLibrary();
+    } catch (e) { alert('Lỗi kết nối: ' + e.message); }
+}
+
+// Flyout cho sidebar thu nhỏ — chạy sau cargo-planner.js
+(function() {
+    const leftPanel     = document.getElementById('left-panel');
+    const flyout        = document.getElementById('sidebar-flyout');
+    const flyoutTitle   = document.getElementById('flyout-title');
+    const flyoutContent = document.getElementById('flyout-content');
+
+    const TAB_LABELS = {
+        container: 'Container',
+        import:    'Nhập pallet',
+        cargo:     'Thêm hàng',
+        list:      'Danh sách'
+    };
+
+    function closeFlyout() {
+        flyout.classList.remove('show');
+    }
+    window._closeFlyout = closeFlyout;
+
+    function openFlyout(tabId) {
+        const src = document.getElementById('tab-' + tabId);
+        if (!src) return;
+        flyoutTitle.textContent = TAB_LABELS[tabId] || tabId;
+        flyoutContent.innerHTML = src.innerHTML;
+        flyout.classList.add('show');
+    }
+
+    // Click ngoài flyout thì đóng
+    document.addEventListener('click', function(e) {
+        if (!flyout.contains(e.target) && !leftPanel.contains(e.target)) {
+            closeFlyout();
+        }
+    });
+
+    // Override switchTab (defined as global fn in cargo-planner.js)
+    const _origSwitchTab = window.switchTab;
+    window.switchTab = function(tabId) {
+        if (leftPanel.classList.contains('collapsed')) {
+            openFlyout(tabId);
+        } else {
+            closeFlyout();
+            if (_origSwitchTab) _origSwitchTab(tabId);
+        }
+    };
+})();
+</script>
+}
+
