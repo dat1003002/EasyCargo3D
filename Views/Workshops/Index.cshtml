@@ -1,0 +1,49 @@
+@model List<EasyCargo3D.Models.Workshop>
+@{
+    Layout = "_LayoutAdmin";
+    ViewData["Title"] = "Quản lý Xưởng";
+}
+<div class="admin-page">
+    <div class="top"><div><h2>🏭 Quản lý Xưởng</h2><a href="/Users">→ Quản lý người dùng</a> · <a href="/">← Trang chính</a></div></div>
+    @if (TempData["Err"] != null) { <div class="err">@TempData["Err"]</div> }
+
+    <div class="card">
+        <b>Thêm / Sửa xưởng</b>
+        <form method="post" action="/Workshops/Save">
+            @Html.AntiForgeryToken()
+            <input type="hidden" name="id" id="ws-id" value="0" />
+            <div class="row">
+                <div><label>Tên xưởng</label><input name="name" id="ws-name" required /></div>
+                <div><label>Mã xưởng</label><input name="code" id="ws-code" required /></div>
+            </div>
+            <button class="btn b-add" type="submit" style="margin-top:12px;">💾 Lưu</button>
+            <button class="btn" type="button" style="background:#4a5568;margin-top:12px;" onclick="resetForm()">Làm mới</button>
+        </form>
+    </div>
+
+    <table>
+        <thead><tr><th>Tên xưởng</th><th>Mã</th><th style="width:160px;">Thao tác</th></tr></thead>
+        <tbody>
+        @foreach (var w in Model)
+        {
+            <tr>
+                <td>@w.Name</td><td>@w.Code</td>
+                <td>
+                    <button class="btn b-edit" onclick="editWs(@w.Id,'@w.Name','@w.Code')">Sửa</button>
+                    <form method="post" action="/Workshops/Delete" style="display:inline" onsubmit="return confirm('Xóa xưởng @w.Name?')">
+                        @Html.AntiForgeryToken()<input type="hidden" name="id" value="@w.Id" />
+                        <button class="btn b-del" type="submit">Xóa</button>
+                    </form>
+                </td>
+            </tr>
+        }
+        </tbody>
+    </table>
+</div>
+
+@section Scripts {
+<script>
+    function editWs(id, name, code) { document.getElementById('ws-id').value = id; document.getElementById('ws-name').value = name; document.getElementById('ws-code').value = code; window.scrollTo(0, 0); }
+    function resetForm() { document.getElementById('ws-id').value = 0; document.getElementById('ws-name').value = ''; document.getElementById('ws-code').value = ''; }
+</script>
+}

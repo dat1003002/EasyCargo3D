@@ -1,5 +1,6 @@
 using EasyCargo3D.Models;
 using EasyCargo3D.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace EasyCargo3D.Controllers
@@ -30,6 +31,7 @@ namespace EasyCargo3D.Controllers
         }
 
         [HttpPost]
+        [Authorize(Roles = "Admin,Manager")]
         public async Task<IActionResult> Create([FromBody] ContainerType model)
         {
             var created = await _svc.CreateAsync(model);
@@ -37,6 +39,7 @@ namespace EasyCargo3D.Controllers
         }
 
         [HttpPut("{id:int}")]
+        [Authorize(Roles = "Admin,Manager")]
         public async Task<IActionResult> Update(int id, [FromBody] ContainerType model)
         {
             if (id != model.Id) return BadRequest("Id không khớp.");
@@ -44,6 +47,7 @@ namespace EasyCargo3D.Controllers
         }
 
         [HttpDelete("{id:int}")]
+        [Authorize(Roles = "Admin,Manager")]
         public async Task<IActionResult> Delete(int id)
         {
             await _svc.DeleteAsync(id);

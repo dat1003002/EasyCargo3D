@@ -6,25 +6,105 @@
 <!-- NAVBAR -->
 <nav class="navbar">
     <div class="logo">
-        <img src="@Url.Content("~/images/logo.png")" alt="Logo" style="height:44px;width:auto;object-fit:contain;" />
+        <img src="@Url.Content("~/images/logo.png")" alt="Logo" style="height:44px;width:auto;max-width:180px;object-fit:contain;display:block;" />
     </div>
     <div class="nav-title">
         <div class="nav-title-text">HỆ THỐNG SẮP XẾP VỊ TRÍ CONTAINER</div>
     </div>
     <div class="nav-actions">
-<button class="btn btn-outline" onclick="resetAll()"><i class="fas fa-redo"></i> Reset</button>
-        <button class="btn btn-outline" id="btn-rotate" onclick="toggleAutoRotate()" title="Tự xoay 360°"><i class="fas fa-sync-alt"></i> Auto Rotate</button>
-        <button class="btn btn-optimize" onclick="optimizePacking()"><i class="fas fa-magic"></i> Tối ưu</button>
-        <button class="btn btn-success" onclick="calculatePacking()"><i class="fas fa-calculator"></i> Tính toán</button>
+        @{ var isAdmin = User.IsInRole("Admin"); var canManage = isAdmin || User.IsInRole("Manager");
+           var fullName = User.FindFirst("FullName")?.Value ?? User.Identity?.Name; }
         <button class="btn btn-primary" onclick="exportPlan()"><i class="fas fa-file-export"></i> Export</button>
+
+        <!-- Menu tài khoản: bấm vào tên để xổ ra -->
+        <div style="position:relative;display:inline-block;margin-left:6px;">
+            <span onclick="toggleUserMenu(event)" style="cursor:pointer;display:inline-flex;align-items:center;gap:8px;padding:5px 12px;background:rgba(255,255,255,0.07);border-radius:20px;font-size:13px;color:#cbd5e0;">
+                <i class="fas fa-user-circle"></i> @fullName <i class="fas fa-caret-down"></i>
+            </span>
+            <div id="user-menu" style="display:none;position:absolute;right:0;top:115%;min-width:190px;background:#141b2d;border:1px solid #2d3f5e;border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,0.6);z-index:300;overflow:hidden;">
+                <a href="/Plans" class="usermenu-item"><i class="fas fa-list"></i> Kế hoạch</a>
+                @if(isAdmin){
+                <a href="/Users" class="usermenu-item"><i class="fas fa-users"></i> Người dùng</a>
+                <a href="/Workshops" class="usermenu-item"><i class="fas fa-industry"></i> Xưởng</a>
+                }
+                <a href="/Account/Logout" class="usermenu-item" style="color:#fc8181;border-top:1px solid #243049;"><i class="fas fa-sign-out-alt"></i> Đăng xuất</a>
+            </div>
+        </div>
     </div>
 </nav>
+<style>
+    .usermenu-item{display:flex;align-items:center;gap:9px;padding:10px 14px;color:#e2e8f0;text-decoration:none;font-size:13px;}
+    .usermenu-item:hover{background:#1b2740;}
+    .usermenu-item i{width:16px;text-align:center;color:#9ecbff;}
+    .usermenu-item[style*="fc8181"] i{color:#fc8181;}
+</style>
 
-<!-- MAIN APP -->
-<!-- Backdrop cho mobile drawer -->
+<!-- HỘP THOẠI LƯU KẾ HOẠCH -->
+<div id="saveplan-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:200;align-items:center;justify-content:center;" onclick="if(event.target===this)closeSavePlan()">
+  <div style="width:380px;background:#141b2d;border:1px solid #2d3f5e;border-radius:12px;padding:20px;color:#e2e8f0;">
+    <h3 style="margin-bottom:14px;">💾 Lưu kế hoạch xếp hàng</h3>
+    <label style="font-size:12px;color:#9ecbff;">Tên kế hoạch</label>
+    <input id="sp-name" style="width:100%;padding:8px 10px;margin:5px 0 12px;background:#11192b;border:1px solid #36507a;border-radius:7px;color:#fff;" placeholder="VD: KH xuất hàng 15/06" />
+    <label style="font-size:12px;color:#9ecbff;">Xưởng</label>
+    <select id="sp-workshop" style="width:100%;padding:8px 10px;margin:5px 0 12px;background:#11192b;border:1px solid #36507a;border-radius:7px;color:#fff;"></select>
+    <label style="font-size:12px;color:#9ecbff;">Người thực hiện</label>
+    <select id="sp-assignee" style="width:100%;padding:8px 10px;margin:5px 0 16px;background:#11192b;border:1px solid #36507a;border-radius:7px;color:#fff;"><option value="">— Chưa giao —</option></select>
+    <div style="display:flex;gap:8px;">
+      <button class="btn btn-success" style="flex:1;" onclick="submitSavePlan()">Lưu</button>
+      <button class="btn btn-outline" style="flex:1;" onclick="closeSavePlan()">Hủy</button>
+    </div>
+  </div>
+</div>
 <div class="drawer-backdrop" id="drawer-backdrop" onclick="closeAllDrawers()"></div>
 
-<!-- Modal thư viện Pallet (chọn & quản lý) -->
+<!-- LIGHTBOX: phóng to 1 ảnh ngay trên trang -->
+<div id="lightbox-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.95);z-index:440;align-items:center;justify-content:center;cursor:zoom-out;" onclick="closeLightbox()">
+    <img id="lightbox-img" src="" style="max-width:94vw;max-height:92vh;object-fit:contain;border-radius:8px;box-shadow:0 10px 50px rgba(0,0,0,0.7);" />
+    <button onclick="event.stopPropagation();closeLightbox()" style="position:absolute;top:18px;right:24px;background:rgba(255,255,255,0.12);border:none;color:#fff;font-size:28px;width:46px;height:46px;border-radius:50%;cursor:pointer;">&times;</button>
+</div>
+
+<!-- MODAL XEM ẢNH ĐÃ CHỤP -->
+<div id="photos-overlay" style="display:none;position:fixed;inset:0;background:rgba(8,11,18,0.92);z-index:420;align-items:center;justify-content:center;backdrop-filter:blur(4px);" onclick="if(event.target===this)closePhotos()">
+    <div style="width:min(900px,92vw);max-height:88vh;background:#141b2d;border:1px solid #2d3f5e;border-radius:14px;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.6);overflow:hidden;">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid #243049;">
+            <div style="font-weight:700;color:#e2e8f0;font-size:15px;"><i class="fas fa-images" style="color:#68d391;"></i> <span id="photos-title">Ảnh thực tế đã chụp</span></div>
+            <button onclick="closePhotos()" style="background:none;border:none;color:#8aa0b8;font-size:24px;line-height:1;cursor:pointer;">&times;</button>
+        </div>
+        <div id="photos-grid" style="padding:16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;overflow:auto;"></div>
+    </div>
+</div>
+
+<!-- MODAL CAMERA: xác minh OCR + lưu ảnh container -->
+<div id="camera-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:400;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:16px;">
+    <div id="camera-title" style="color:#fff;font-weight:700;font-size:16px;text-align:center;"></div>
+    <video id="camera-video" autoplay playsinline muted style="max-width:92vw;max-height:55vh;border-radius:10px;background:#000;"></video>
+    <!-- Khung chọn vùng chữ (verify, sau khi chụp) -->
+    <div id="verify-pane" style="display:none;flex-direction:column;align-items:center;gap:8px;">
+        <div style="color:#9ecbff;font-size:12px;text-align:center;">Kéo khoanh vùng chữ cần phân tích (để trống = cả ảnh). Chữ ngang/dọc/mờ đều nhận diện.</div>
+        <canvas id="verify-canvas" style="max-width:92vw;max-height:50vh;border-radius:8px;border:1px solid #36507a;touch-action:none;cursor:crosshair;"></canvas>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;">
+            <button onclick="analyzeVerify()" class="btn btn-success"><i class="fas fa-magnifying-glass"></i> Phân tích</button>
+            <button onclick="retakeVerify()" class="btn btn-outline"><i class="fas fa-rotate-left"></i> Chụp lại</button>
+            <button onclick="closeCamera()" class="btn btn-outline">Hủy</button>
+        </div>
+    </div>
+    <div id="camera-status" style="color:#f6ad55;font-size:13px;min-height:18px;text-align:center;max-width:92vw;"></div>
+    <div id="camera-thumbs" style="display:flex;gap:6px;flex-wrap:wrap;max-width:92vw;justify-content:center;"></div>
+    <div id="camera-actions" style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;">
+        <button onclick="cameraCapture()" id="camera-capture-btn" class="btn btn-success"><i class="fas fa-camera"></i> Chụp</button>
+        <button onclick="document.getElementById('camera-file').click()" id="camera-file-btn" class="btn btn-outline" style="display:none;"><i class="fas fa-image"></i> Ảnh có sẵn</button>
+        <button onclick="cameraDone()" id="camera-done-btn" class="btn btn-primary" style="display:none;"><i class="fas fa-check"></i> Xong</button>
+        <button onclick="closeCamera()" class="btn btn-outline">Hủy</button>
+    </div>
+    <input type="file" id="camera-file" accept="image/*" multiple style="display:none;" onchange="cameraPickFiles(this.files)" />
+    <canvas id="camera-canvas" style="display:none;"></canvas>
+</div>
+
+<!-- Nút xác nhận đã xếp xong container (hiện sau khi xem mô phỏng) -->
+<button id="finish-container-btn" style="display:none;position:fixed;bottom:80px;left:50%;transform:translateX(-50%);z-index:120;align-items:center;gap:8px;background:linear-gradient(135deg,#38a169,#2f855a);color:#fff;border:none;border-radius:25px;padding:12px 26px;font-size:15px;font-weight:700;cursor:pointer;box-shadow:0 6px 24px rgba(0,0,0,0.5);">
+    <i class="fas fa-check-circle"></i> Đã xếp xong container này
+</button>
+
 <div class="ct-modal-overlay" id="pallet-library-modal" onclick="if(event.target===this)closePalletLibrary()">
     <div class="ct-modal" style="width:580px;">
         <div class="ct-modal-header">
@@ -40,7 +120,6 @@
     </div>
 </div>
 
-<!-- Modal thêm/sửa Pallet Type -->
 <div class="ct-modal-overlay" id="pallet-type-modal" onclick="if(event.target===this)closePalletModal()">
     <div class="ct-modal" style="width:480px;">
         <div class="ct-modal-header">
@@ -95,7 +174,6 @@
     </div>
 </div>
 
-<!-- Modal thêm/sửa Container Type -->
 <div class="ct-modal-overlay" id="container-modal" onclick="if(event.target===this)closeContainerModal()">
     <div class="ct-modal">
         <div class="ct-modal-header">
@@ -152,7 +230,11 @@
 
 <!-- Flyout panel khi sidebar thu nhỏ -->
 <div class="sidebar-flyout" id="sidebar-flyout">
-    <div class="flyout-title" id="flyout-title"></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+        <div class="flyout-title" id="flyout-title" style="flex:1;"></div>
+        <button type="button" onclick="window._closeFlyout && window._closeFlyout()" title="Thu nhỏ"
+            style="background:#2d3f5e;border:none;color:#fff;width:34px;height:34px;border-radius:8px;font-size:18px;cursor:pointer;flex:none;">&times;</button>
+    </div>
     <div id="flyout-content"></div>
 </div>
 
@@ -162,12 +244,14 @@
     <div class="left-panel" id="left-panel">
         <div class="panel-tabs">
             <div class="tab active" onclick="switchTab('container')" title="Container"><i class="fas fa-box"></i><span class="tab-label">Container</span></div>
+            @if(canManage){
             <div class="tab" onclick="switchTab('import')" title="Import"><i class="fas fa-file-import"></i><span class="tab-label">Import</span></div>
-            <div class="tab" onclick="switchTab('cargo')" title="Thêm"><i class="fas fa-plus"></i><span class="tab-label">Thêm</span></div>
-            <div class="tab" onclick="switchTab('list')" title="Danh sách">
-                <i class="fas fa-list"></i><span class="tab-label"> DS</span>
+            }
+            <div class="tab" onclick="switchTab('list')" title="Kế hoạch">
+                <i class="fas fa-list"></i><span class="tab-label"> Kế hoạch</span>
                 <span id="item-count" class="tab-badge">0</span>
             </div>
+            <div class="tab" onclick="switchTab('cargo')" title="Lịch sử"><i class="fas fa-clock-rotate-left"></i><span class="tab-label">Lịch sử</span></div>
             <div class="tab panel-collapse-btn" onclick="toggleLeftPanel()" id="left-toggle-btn" title="Thu/mở">
                 <i class="fas fa-chevron-left" id="left-toggle-icon"></i>
             </div>
@@ -193,16 +277,27 @@
             <div class="import-settings-box">
                 <div class="import-settings-title"><i class="fas fa-layer-group"></i> Cài đặt container</div>
                 <div class="settings-grid">
-                    <div>
-                        <div class="dim-label">Loại container</div>
-                        <select id="import-container-type" class="input-dark" onchange="onImportContainerChange()">
-                            <!-- Được điền động từ API -->
-                        </select>
+                    <div class="span-full" style="display:flex;gap:10px;align-items:flex-end;">
+                        <div style="flex:1;min-width:0;">
+                            <div class="dim-label">Loại container chính (ưu tiên)</div>
+                            <select id="import-container-type" class="input-dark" style="width:100%;" onchange="onImportContainerChange()">
+                                <!-- Được điền động từ API -->
+                            </select>
+                        </div>
+                        <div style="width:84px;flex:none;">
+                            <div class="dim-label">Số container</div>
+                            <input type="number" id="import-container-count" value="8" min="1" max="50" class="input-dark input-bold" style="width:100%;">
+                        </div>
                     </div>
-                    <div>
-                        <div class="dim-label">Số container</div>
-                        <input type="number" id="import-container-count" value="8" min="1" max="50" class="input-dark input-bold">
+                    <div class="span-full">
+                        <div class="dim-label">Thêm loại container (theo thứ tự ưu tiên)</div>
+                        <div style="display:flex;gap:6px;align-items:stretch;">
+                            <select id="ctype-pick" class="input-dark" style="flex:1;min-width:0;"></select>
+                            <button type="button" class="add-btn" style="background:#3f8fcc;white-space:nowrap;padding:6px 10px;font-size:12px;flex:none;width:30%;top:0;margin-top:0px;align-self:flex-start;" onclick="addCtype()">➕</button>
+                        </div>
+                        <div id="ctype-list" style="margin-top:6px;display:flex;flex-direction:column;gap:4px;"></div>
                     </div>
+
                     <div class="span-full">
                         <div class="import-container-specs" id="import-container-specs" style="display:none;">
                             <span id="ics-dim"></span>
@@ -210,10 +305,8 @@
                             <span id="ics-wt"></span>
                         </div>
                     </div>
-                    <div class="span-full">
-                        <div class="dim-label">Tải trọng tối đa / container (kg)</div>
-                        <input type="number" id="import-max-weight" value="19000" min="1000" step="500" class="input-dark input-bold input-accent">
-                    </div>
+                    <input type="hidden" id="import-max-weight" value="0" />
+                    <div class="span-full" style="font-size:11px;color:#718096;">💡 Nhập tải trọng tối đa cho từng loại container ở danh sách phía trên.</div>
                 </div>
             </div>
 
@@ -225,6 +318,18 @@
                     <i class="fas fa-magic"></i> Tự động tối ưu
                 </button>
             </div>
+            <div class="import-btn-row" style="margin-top:8px;">
+                <button class="add-btn" style="background:linear-gradient(135deg,#f6ad55,#ed8936);width:100%;" onclick="playForkliftSim()">
+                    <i class="fas fa-truck-ramp-box"></i> Mô phỏng xe nâng xếp hàng
+                </button>
+            </div>
+            @if(canManage){
+            <div class="import-btn-row" style="margin-top:8px;">
+                <button class="add-btn" style="background:linear-gradient(135deg,#38a169,#2f855a);width:100%;" onclick="openSavePlan()">
+                    <i class="fas fa-save"></i> Lưu kế hoạch xếp container
+                </button>
+            </div>
+            }
             <div id="import-summary" class="import-summary" style="display:none;"></div>
         </div>
 
@@ -241,76 +346,29 @@
 
         <!-- CARGO TAB -->
         <div class="panel-content tab-pane" id="tab-cargo">
-            <div class="section-title"><i class="fas fa-plus-circle"></i> Add Cargo Item</div>
-            <div class="form-group">
-                <label>Item Name</label>
-                <input type="text" id="item-name" placeholder="e.g. Cardboard Box" />
+            <div class="list-header">
+                <div class="section-title mb-0"><i class="fas fa-clock-rotate-left"></i> Lịch sử (đã hoàn thành)</div>
+                <button class="btn btn-outline" onclick="loadPlansPanel('done','plans-done')"><i class="fas fa-rotate"></i></button>
             </div>
-            <div class="form-group">
-                <label>Dimensions (cm)</label>
-                <div class="form-row">
-                    <div><label>Length</label><input type="number" id="item-l" placeholder="100" min="1" /></div>
-                    <div><label>Width</label><input type="number" id="item-w" placeholder="80" min="1" /></div>
-                    <div><label>Height</label><input type="number" id="item-h" placeholder="60" min="1" /></div>
-                </div>
-            </div>
-            <div class="form-row-2">
-                <div class="form-group">
-                    <label>Weight (kg)</label>
-                    <input type="number" id="item-weight" placeholder="25" min="0" />
-                </div>
-                <div class="form-group">
-                    <label>Quantity</label>
-                    <input type="number" id="item-qty" value="1" min="1" max="999" />
-                </div>
-            </div>
-            <div class="form-group">
-                <label>Color</label>
-                <div class="color-row" id="color-picker">
-                    <div class="color-dot active" style="background:#E74C3C" data-color="#E74C3C"></div>
-                    <div class="color-dot" style="background:#3498DB" data-color="#3498DB"></div>
-                    <div class="color-dot" style="background:#2ECC71" data-color="#2ECC71"></div>
-                    <div class="color-dot" style="background:#F39C12" data-color="#F39C12"></div>
-                    <div class="color-dot" style="background:#9B59B6" data-color="#9B59B6"></div>
-                    <div class="color-dot" style="background:#1ABC9C" data-color="#1ABC9C"></div>
-                    <div class="color-dot" style="background:#E67E22" data-color="#E67E22"></div>
-                    <div class="color-dot" style="background:#34495E" data-color="#34495E"></div>
-                    <div class="color-dot" style="background:#E91E63" data-color="#E91E63"></div>
-                    <div class="color-dot" style="background:#00BCD4" data-color="#00BCD4"></div>
-                </div>
-            </div>
-            <div class="form-group">
-                <label>Description (optional)</label>
-                <input type="text" id="item-desc" placeholder="Notes..." />
-            </div>
-            <button class="add-btn" onclick="addCargoItem()"><i class="fas fa-plus"></i> Add to Load</button>
-
-            <div class="section-title mt-20"><i class="fas fa-magic"></i> Quick Presets</div>
-            <div class="preset-grid">
-                <button class="btn btn-outline btn-preset" onclick="addPreset('pallet')">📦 Euro Pallet</button>
-                <button class="btn btn-outline btn-preset" onclick="addPreset('drum')">🛢️ Drum 200L</button>
-                <button class="btn btn-outline btn-preset" onclick="addPreset('box')">📫 Small Box</button>
-                <button class="btn btn-outline btn-preset" onclick="addPreset('bag')">🎒 Big Bag</button>
+            <div id="plans-done" class="cargo-list">
+                <div class="empty-state"><i class="fas fa-inbox"></i><p>Đang tải...</p></div>
             </div>
         </div>
 
         <!-- LIST TAB -->
         <div class="panel-content tab-pane" id="tab-list">
             <div class="list-header">
-                <div class="section-title mb-0"><i class="fas fa-list-ul"></i> Cargo List</div>
-                <button class="btn btn-danger" onclick="clearAll()">Clear All</button>
+                <div class="section-title mb-0"><i class="fas fa-list-ul"></i> Kế hoạch đã tạo</div>
+                <button class="btn btn-outline" onclick="loadPlansPanel('active','plans-active')"><i class="fas fa-rotate"></i></button>
             </div>
-            <div class="cargo-list" id="cargo-list">
-                <div class="empty-state">
-                    <i class="fas fa-inbox"></i>
-                    <p>No items yet.<br>Go to "Add Cargo" tab to add items.</p>
-                </div>
+            <div id="plans-active" class="cargo-list">
+                <div class="empty-state"><i class="fas fa-inbox"></i><p>Đang tải...</p></div>
             </div>
         </div>
     </div>
 
     <!-- 3D VIEWER -->
-    <div class="viewer-container">
+    <div class="viewer-container" id="viewer-container">
 
         <!-- MULTI-CONTAINER NAVIGATOR -->
         <div id="multi-nav" class="multi-nav">
@@ -352,7 +410,7 @@
         <!-- TOOLBAR -->
         <div class="viewer-overlay">
             <button class="viewer-btn" onclick="resetCamera()" title="Reset View"><i class="fas fa-home"></i></button>
-            <button class="viewer-btn" onclick="toggleWireframe()" title="Wireframe"><i class="fas fa-border-all"></i></button>
+            <button class="viewer-btn" onclick="toggleFullscreen3D()" title="Toàn màn hình" id="btn-fullscreen"><i class="fas fa-expand"></i></button>
             <button class="viewer-btn" onclick="toggleLabels()" title="Labels"><i class="fas fa-tag"></i></button>
             <button class="viewer-btn" onclick="zoomIn()" title="Zoom In"><i class="fas fa-plus"></i></button>
             <button class="viewer-btn" onclick="zoomOut()" title="Zoom Out"><i class="fas fa-minus"></i></button>
@@ -364,6 +422,7 @@
             <button class="view-btn" onclick="setView('front')">Front</button>
             <button class="view-btn" onclick="setView('top')">Top</button>
             <button class="view-btn" onclick="setView('side')">Side</button>
+            <button class="view-btn" id="btn-rotate" onclick="toggleAutoRotate()" title="Tự xoay 360°"><i class="fas fa-sync-alt"></i> Auto Rotate</button>
         </div>
 
         <!-- LOADING OVERLAY -->
@@ -381,6 +440,9 @@
 
     <!-- STATS PANEL -->
     <div class="stats-panel" id="stats-panel" style="display:none">
+        <button class="stats-toggle" onclick="toggleStatsPanel()" title="Thu/mở thống kê">
+            <i class="fas fa-chevron-right" id="stats-toggle-icon"></i>
+        </button>
         <div class="section-title"><i class="fas fa-chart-bar"></i> Statistics</div>
 
         <div class="stat-card">
@@ -477,6 +539,16 @@
         triggerResize();
     };
 
+    window.toggleStatsPanel = function() {
+        const sp = document.getElementById('stats-panel');
+        if (!sp) return;
+        const willCollapse = !sp.classList.contains('collapsed');
+        sp.classList.toggle('collapsed', willCollapse);
+        const icon = document.getElementById('stats-toggle-icon');
+        if (icon) icon.className = willCollapse ? 'fas fa-chart-bar' : 'fas fa-chevron-right';
+        triggerResize();
+    };
+
     window.closeAllDrawers = function() {
         leftPanel.classList.add('collapsed');
         const icon = document.getElementById('left-toggle-icon');
@@ -485,17 +557,163 @@
         triggerResize();
     };
 
+    // Toàn màn hình cho khung 3D (CSS phủ kín — chạy cả trên iPad)
+    function _setFsIcon(on) {
+        const icon = document.querySelector('#btn-fullscreen i');
+        if (icon) icon.className = on ? 'fas fa-compress' : 'fas fa-expand';
+    }
+    function _applyFs(on) {
+        const el = document.getElementById('viewer-container');
+        if (!el) return;
+        el.classList.toggle('viewer-fs', on);
+        document.body.classList.toggle('viewer-fs-on', on);
+        _setFsIcon(on);
+        triggerResize();
+    }
+    window.toggleFullscreen3D = function() {
+        const root = document.documentElement;
+        const goingOn = !document.getElementById('viewer-container').classList.contains('viewer-fs');
+        _applyFs(goingOn);   // phủ kín bằng CSS (3D to, panel nổi lên trên)
+        // Fullscreen API toàn TRANG để ẩn cả thanh trình duyệt
+        try {
+            if (goingOn) {
+                const req = root.requestFullscreen || root.webkitRequestFullscreen;
+                if (req) req.call(root).then(() => triggerResize()).catch(() => {});
+            } else {
+                const ex = document.exitFullscreen || document.webkitExitFullscreen;
+                if ((document.fullscreenElement || document.webkitFullscreenElement) && ex) ex.call(document).catch(() => {});
+            }
+        } catch (e) {}
+    };
+    // Khi thoát fullscreen bằng Esc/F11 → bỏ luôn lớp phủ CSS
+    function _onFsChange() {
+        const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+        if (!fsEl) _applyFs(false);
+    }
+    document.addEventListener('fullscreenchange', _onFsChange);
+    document.addEventListener('webkitfullscreenchange', _onFsChange);
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Escape' && document.getElementById('viewer-container').classList.contains('viewer-fs') && !document.fullscreenElement) {
+            _applyFs(false);
+        }
+    });
+
 })();
 </script>
 
 @section Scripts {
-<script src="~/js/cargo-planner.js"></script>
 <script>
+    window.APP_CAN_MANAGE = @(canManage ? "true" : "false");
+    window.APP_IS_ADMIN   = @(isAdmin ? "true" : "false");
+</script>
+<script src="~/js/cargo-planner.js" asp-append-version="true"></script>
+<script>
+// ===== Danh sách loại container theo ƯU TIÊN (thêm bao nhiêu loại tùy ý) =====
+window._ctypeList = [];   // các loại THÊM sau loại chính
+function addCtype() {
+    const pick = document.getElementById('ctype-pick');
+    const key  = pick && pick.value;
+    if (!key || !CONTAINERS[key]) return;
+    const mainKey = document.getElementById('import-container-type')?.value;
+    if (key === mainKey) { alert('Loại này đã là container chính (ưu tiên 1).'); return; }
+    if (window._ctypeList.includes(key)) { alert('Đã có loại này trong danh sách.'); return; }
+    window._ctypeList.push(key);
+    renderCtypeList();
+}
+function removeCtype(key) {
+    window._ctypeList = window._ctypeList.filter(k => k !== key);
+    renderCtypeList();
+}
+function renderCtypeList() {
+    const box = document.getElementById('ctype-list');
+    if (!box) return;
+    window._ctypeWeights = window._ctypeWeights || {};
+    const wInput = (type) => {
+        const v = window._ctypeWeights[type] || '';
+        return `<input type="number" min="0" value="${v}" placeholder="Tải trọng tối đa (kg)" oninput="window._ctypeWeights['${type}']=this.value"
+            style="width:140px;padding:4px 8px;background:#11192b;border:1px solid #36507a;border-radius:6px;color:#68d391;font-size:12px;font-weight:700;">`;
+    };
+    const mainKey = document.getElementById('import-container-type')?.value;
+    const mc = mainKey && CONTAINERS[mainKey] ? CONTAINERS[mainKey] : null;
+    let html = `<div style="display:flex;align-items:center;gap:6px;background:#1a2740;border:1px solid #2d4468;border-radius:7px;padding:5px 9px;font-size:12px;">
+        <span style="background:#3f8fcc;color:#fff;border-radius:4px;padding:1px 6px;font-weight:700;">1</span>
+        <b style="color:#9ecbff;flex:1;">${mc ? mc.name : '(chưa chọn)'}</b>
+        ${mainKey ? wInput(mainKey) : ''}</div>`;
+    window._ctypeList.forEach((k, i) => {
+        const c = CONTAINERS[k];
+        html += `<div style="display:flex;align-items:center;gap:6px;background:#16213a;border:1px solid #2d3f5e;border-radius:7px;padding:5px 9px;font-size:12px;">
+            <span style="background:#4a5568;color:#fff;border-radius:4px;padding:1px 6px;font-weight:700;">${i + 2}</span>
+            <b style="color:#cbd5e0;flex:1;">${c ? c.name : k}</b>
+            ${wInput(k)}
+            <span style="color:#fc8181;cursor:pointer;font-weight:700;" onclick="removeCtype('${k}')">✕</span></div>`;
+    });
+    box.innerHTML = html;
+}
+function collectContainerTypes() {
+    const mainKey = document.getElementById('import-container-type')?.value;
+    const list = [];
+    if (mainKey && CONTAINERS[mainKey]) list.push(mainKey);
+    (window._ctypeList || []).forEach(k => { if (CONTAINERS[k] && !list.includes(k)) list.push(k); });
+    return list;
+}
+// Danh sách {type, maxWeight} theo ưu tiên — tải trọng người dùng nhập riêng
+function collectContainers() {
+    window._ctypeWeights = window._ctypeWeights || {};
+    return collectContainerTypes().map(t => ({ type: t, maxWeight: parseFloat(window._ctypeWeights[t]) || 0 }));
+}
+
+// ===== MENU TÀI KHOẢN =====
+function toggleUserMenu(e) {
+    if (e) e.stopPropagation();
+    const m = document.getElementById('user-menu');
+    if (m) m.style.display = (m.style.display === 'block') ? 'none' : 'block';
+}
+document.addEventListener('click', function(){ const m=document.getElementById('user-menu'); if(m) m.style.display='none'; });
+// Tải số kế hoạch cho badge ngay khi mở trang
+window.addEventListener('load', function(){ setTimeout(function(){ try{ loadPlansPanel('active','plans-active'); }catch(e){} }, 300); });
+
+// ===== LƯU KẾ HOẠCH (giao người thực hiện) =====
+async function openSavePlan() {
+    const hasPlan = (typeof multiPlans !== 'undefined' && multiPlans && multiPlans.length) ||
+                    (typeof currentPlan !== 'undefined' && currentPlan);
+    if (!hasPlan) { alert('Chưa có kế hoạch! Hãy "Tự động tối ưu" hoặc "Tính theo số lượng" trước.'); return; }
+    try {
+        const meta = await (await fetch('/Plans/SaveMeta')).json();
+        const ws = document.getElementById('sp-workshop');
+        ws.innerHTML = (meta.workshops || []).map(w => `<option value="${w.id}">${w.name}</option>`).join('');
+        const as = document.getElementById('sp-assignee');
+        as.innerHTML = '<option value="">— Chưa giao —</option>' +
+            (meta.executors || []).map(e => `<option value="${e.id}">${e.name}</option>`).join('');
+        if (!meta.workshops || !meta.workshops.length) { alert('Bạn chưa được gán xưởng nào. Liên hệ admin.'); return; }
+        document.getElementById('saveplan-overlay').style.display = 'flex';
+    } catch (e) { alert('Không tải được dữ liệu lưu kế hoạch.'); }
+}
+function closeSavePlan() { document.getElementById('saveplan-overlay').style.display = 'none'; }
+async function submitSavePlan() {
+    const name = document.getElementById('sp-name').value.trim();
+    if (!name) { alert('Nhập tên kế hoạch.'); return; }
+    const workshopId = parseInt(document.getElementById('sp-workshop').value) || 0;
+    const assigneeVal = document.getElementById('sp-assignee').value;
+    const assigneeId = assigneeVal ? parseInt(assigneeVal) : null;
+    const planData = (typeof multiPlans !== 'undefined' && multiPlans && multiPlans.length)
+        ? multiPlans : (typeof currentPlan !== 'undefined' ? currentPlan : null);
+    const containerType = document.getElementById('import-container-type')?.value || '';
+    try {
+        const res = await fetch('/Plans/Save', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, containerType, workshopId, assigneeId, dataJson: JSON.stringify(planData) })
+        });
+        if (res.ok) { closeSavePlan(); alert('✅ Đã lưu kế hoạch!'); }
+        else { alert('Lưu thất bại: ' + (await res.text())); }
+    } catch (e) { alert('Lỗi khi lưu kế hoạch.'); }
+}
+
 // Cập nhật specs khi chọn container type trong tab Import
 function onImportContainerChange() {
     const code = document.getElementById('import-container-type').value;
     const c    = CONTAINERS[code];
     const box  = document.getElementById('import-container-specs');
+    renderCtypeList(); // cập nhật nhãn loại chính
     if (!c || !box) return;
 
     const vol = (c.length * c.width * c.height / 1e6).toFixed(1);
@@ -503,9 +721,7 @@ function onImportContainerChange() {
     document.getElementById('ics-vol').textContent = `📦 ${vol} m³`;
     document.getElementById('ics-wt').textContent  = `⚖️ ${c.maxWeight.toLocaleString()} kg`;
     box.style.display = '';
-
-    // Tự điền tải trọng tối đa theo container
-    document.getElementById('import-max-weight').value = c.maxWeight;
+    // Không tự điền tải trọng nữa — để người tạo tự nhập (mặc định 0)
 }
 
 // ==================== PALLET TYPE CRUD ====================
@@ -688,8 +904,443 @@ async function deletePalletType(id) {
             closeFlyout();
             if (_origSwitchTab) _origSwitchTab(tabId);
         }
+        if (tabId === 'list') loadPlansPanel('active', 'plans-active');
+        if (tabId === 'cargo') loadPlansPanel('done', 'plans-done');
     };
 })();
+
+// ===== Hiển thị danh sách kế hoạch / lịch sử trong panel trái =====
+function _statusBadge(s) {
+    const m = { New: ['Mới', '#2b3a55', '#9ecbff'], InProgress: ['Đang làm', '#4a3b18', '#f6ad55'], Done: ['Hoàn thành', '#1d3a26', '#68d391'] };
+    const x = m[s] || [s, '#333', '#ccc'];
+    return `<span style="background:${x[1]};color:${x[2]};padding:1px 8px;border-radius:20px;font-size:11px;font-weight:700;">${x[0]}</span>`;
+}
+window._planCache = {};   // cache dữ liệu container theo planId
+async function loadPlansPanel(scope, elId) {
+    const box = document.getElementById(elId);
+    if (!box) return;
+    box.innerHTML = '<div class="empty-state"><p>Đang tải...</p></div>';
+    try {
+        const list = await (await fetch('/Plans/ListJson?scope=' + scope)).json();
+        if (scope === 'active') { const b = document.getElementById('item-count'); if (b) b.textContent = list.length; }
+        if (!list.length) { box.innerHTML = '<div class="empty-state"><i class="fas fa-inbox"></i><p>Chưa có kế hoạch.</p></div>'; return; }
+        box.innerHTML = list.map(p => {
+            const d = new Date(p.updatedAt);
+            const dt = ('0'+d.getDate()).slice(-2)+'/'+('0'+(d.getMonth()+1)).slice(-2)+' '+('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);
+            return `<div style="background:#141b2d;border:1px solid #243049;border-radius:9px;margin-bottom:8px;overflow:hidden;">
+                <div style="padding:10px 12px;cursor:pointer;" onclick="togglePlan(${p.id}, this)">
+                    <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
+                        <b style="color:#e2e8f0;font-size:13px;"><i class="fas fa-caret-right plan-caret"></i> ${p.name}</b>${_statusBadge(p.status)}
+                    </div>
+                    <div style="font-size:11px;color:#8aa0b8;margin-top:5px;line-height:1.6;">
+                        🏭 ${p.workshop || '—'} · 📦 ${p.containerType || '—'}<br>
+                        👤 ${p.creator || '—'}${p.assignee ? ' · 🛠️ ' + p.assignee : ''} · 🕒 ${dt}
+                    </div>
+                </div>
+                <div class="plan-children" data-pid="${p.id}" style="display:none;padding:0 10px 8px;"></div>
+            </div>`;
+        }).join('');
+    } catch (e) {
+        box.innerHTML = '<div class="empty-state"><p>Lỗi tải danh sách.</p></div>';
+    }
+}
+
+async function togglePlan(id, headerEl) {
+    const child = headerEl.parentElement.querySelector('.plan-children');
+    const caret = headerEl.querySelector('.plan-caret');
+    if (child.style.display !== 'none') { child.style.display = 'none'; if(caret) caret.className='fas fa-caret-right plan-caret'; return; }
+    if(caret) caret.className='fas fa-caret-down plan-caret';
+    child.style.display = 'block';
+    await renderPlanContainers(id, child);
+}
+
+async function renderPlanContainers(id, child) {
+    child.innerHTML = '<div style="color:#8aa0b8;font-size:11px;padding:6px;">Đang tải...</div>';
+    try {
+        if (!window._planCache[id]) {
+            let data = await (await fetch('/Plans/Data?id=' + id)).json();
+            if (!Array.isArray(data)) data = data ? [data] : [];
+            window._planCache[id] = data;
+        }
+        const meta = await (await fetch('/Plans/Containers?id=' + id)).json();
+        const data = window._planCache[id];
+        const items = meta.items || [];
+        if (!data.length) { child.innerHTML = '<div style="color:#8aa0b8;font-size:11px;padding:6px;">Không có container.</div>'; return; }
+        const anyDoing = items.some(x => x && x.doing);
+        window._photoStore = window._photoStore || {};
+        child.innerHTML = data.map((pl, i) => {
+            window._photoStore[id + '_' + i] = (items[i] && items[i].photos) || [];
+            const c = pl.container || {};
+            const cnt = (pl.packedItems || []).filter(x => !(x.item && x.item.isWood)).length;
+            const info = items[i] || { name: 'Container ' + (i+1), done: false, doing: false };
+            let action = '';
+            if (info.done) action = `<span style="color:#68d391;font-size:11px;font-weight:700;">✅ Đã xếp</span>`;
+            else if (info.doing) action = `<span style="color:#f6ad55;font-size:11px;font-weight:700;">⏳ Đang thực hiện</span><div style="color:#718096;font-size:10px;">(xác nhận từng pallet trên màn hình 3D)</div>`;
+            else if (meta.canExecute && !anyDoing) action = `<button onclick="event.stopPropagation();startContainer(${id},${i},'${(info.name||'').replace(/'/g,'')}')" style="background:#ed8936;border:none;color:#fff;border-radius:6px;padding:4px 8px;font-size:11px;cursor:pointer;">▶ Xác nhận làm</button>`;
+            else if (meta.canExecute) action = `<span style="color:#718096;font-size:11px;">🔒 Chờ hoàn thành container đang làm</span>`;
+            const rename = meta.canRename ? `<i class="fas fa-pen" title="Đổi tên" style="color:#63b3ed;cursor:pointer;margin-left:6px;" onclick="event.stopPropagation();renameContainer(${id},${i},'${(info.name||'').replace(/'/g,'')}')"></i>` : '';
+            return `<div style="background:#11192b;border:1px solid #2d3f5e;border-radius:7px;padding:7px 10px;margin-top:5px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
+                    <div style="font-size:12px;cursor:pointer;" onclick="${info.doing ? `resumeContainer(${id},${i})` : (info.done ? `playCompletionReplay(${id},${i})` : `openSavedContainer(${id},${i},false)`)}">
+                        <b style="color:#9ecbff;">📦 ${info.name}</b>${rename}
+                        <div style="color:#8aa0b8;font-size:11px;">${c.name || ''} · ${cnt} pallet · ${Math.round(pl.totalWeight||0).toLocaleString('vi-VN')} kg · mở 3D ›</div>
+                        ${(info.photos && info.photos.length) ? `<div style="margin-top:3px;"><span onclick="event.stopPropagation();openPhotosKey('${id}_${i}')" style="color:#68d391;cursor:pointer;font-size:11px;"><i class="fas fa-images"></i> Xem ${info.photos.length} ảnh đã chụp</span></div>` : ''}
+                    </div>
+                    <div style="white-space:nowrap;">${action}</div>
+                </div>
+            </div>`;
+        }).join('');
+    } catch (e) { child.innerHTML = '<div style="color:#fc8181;font-size:11px;">Lỗi tải dữ liệu.</div>'; }
+}
+
+// Phát lại mô phỏng container ĐÃ HOÀN THÀNH: xếp pallet → néo dây → đóng cửa → thông báo
+function playCompletionReplay(id, idx) {
+    openSavedContainer(id, idx);                 // dựng cảnh (cửa mở, chưa néo)
+    try { autoRotate = true; } catch (e) {}
+    showForkliftWatchBanner(true, '🎬 Mô phỏng xếp container...');
+    setTimeout(() => { if (typeof addLashing === 'function') try { addLashing(); } catch (e) {} }, 350);
+    window._onForkliftDone = function() {
+        try { autoRotate = false; } catch (e) {}
+        try { if (typeof addLashing === 'function') addLashing(); } catch (e) {}  // néo dây đầy đủ (cả đuôi)
+        try { doorsClosed = true; applyDoorState(); } catch (e) {}                // đóng cửa + niêm phong
+        showForkliftWatchBanner(false);
+        showToast('✅ Hoàn thành xếp container', true);
+    };
+    setTimeout(() => { if (typeof playForkliftSim === 'function') playForkliftSim(); }, 700);
+}
+
+function openSavedContainer(id, idx, closed) {
+    const data = window._planCache[id];
+    if (!data || !data.length) return;
+    multiPlans = data;
+    multiCurrentIdx = idx;
+    const nav = document.getElementById('multi-nav');
+    if (nav) nav.style.display = 'flex';
+    navContainer(idx, true);
+    // Container đã hoàn thành → hiển thị ĐÓNG CỬA + niêm phong + DÂY NEO
+    if (closed) {
+        try { doorsClosed = true; applyDoorState(); } catch (e) {}
+        setTimeout(() => { if (typeof addLashing === 'function') try { addLashing(); } catch (e) {} }, 350);
+    }
+}
+
+async function renameContainer(id, idx, oldName) {
+    const name = prompt('Đổi tên container:', oldName);
+    if (name == null || !name.trim()) return;
+    const fd = new URLSearchParams({ id, idx, name: name.trim() });
+    await fetch('/Plans/RenameContainer', { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body: fd });
+    // tải lại danh sách
+    document.querySelectorAll(`.plan-children[data-pid="${id}"]`).forEach(c => renderPlanContainers(id, c));
+}
+
+// ===== XEM ẢNH ĐÃ CHỤP =====
+function openPhotosKey(key) {
+    const urls = (window._photoStore && window._photoStore[key]) || [];
+    const grid = document.getElementById('photos-grid');
+    const title = document.getElementById('photos-title');
+    if (title) title.textContent = `Ảnh thực tế đã chụp (${urls.length})`;
+    grid.innerHTML = urls.length
+        ? urls.map(u => `<div onclick="openLightbox('${u}')" style="cursor:zoom-in;border-radius:10px;overflow:hidden;border:1px solid #2d3f5e;aspect-ratio:4/3;background:#0e1320;">
+            <img src="${u}" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block;transition:transform .2s;" onmouseover="this.style.transform='scale(1.06)'" onmouseout="this.style.transform='scale(1)'"></div>`).join('')
+        : '<div style="color:#8aa0b8;grid-column:1/-1;text-align:center;padding:20px;">Chưa có ảnh.</div>';
+    document.getElementById('photos-overlay').style.display = 'flex';
+}
+function openLightbox(url) {
+    document.getElementById('lightbox-img').src = url;
+    document.getElementById('lightbox-overlay').style.display = 'flex';
+}
+function closeLightbox() { document.getElementById('lightbox-overlay').style.display = 'none'; }
+function closePhotos() { document.getElementById('photos-overlay').style.display = 'none'; }
+
+// ===== CAMERA: xác minh OCR + lưu ảnh container =====
+let _camStream = null, _camMode = null, _camVerifyName = '', _camVerifyPass = null, _camArchive = null, _camVerifyCtx = null;
+async function _startCam() {
+    try {
+        _camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        document.getElementById('camera-video').srcObject = _camStream;
+    } catch (e) { alert('Không mở được camera: ' + e.message); closeCamera(); }
+}
+function closeCamera() {
+    if (_camStream) { _camStream.getTracks().forEach(t => t.stop()); _camStream = null; }
+    document.getElementById('camera-overlay').style.display = 'none';
+    document.getElementById('camera-thumbs').innerHTML = '';
+    document.getElementById('camera-status').textContent = '';
+    // reset pane
+    document.getElementById('verify-pane').style.display = 'none';
+    document.getElementById('camera-video').style.display = '';
+    document.getElementById('camera-actions').style.display = 'flex';
+    _camMode = null; _verifySrc = null; _selRect = null;
+}
+function _grabCanvas() {
+    const v = document.getElementById('camera-video'), cv = document.getElementById('camera-canvas');
+    cv.width = v.videoWidth || 640; cv.height = v.videoHeight || 480;
+    cv.getContext('2d').drawImage(v, 0, 0, cv.width, cv.height);
+    return cv;
+}
+function _norm(s) { return (s || '').toUpperCase().replace(/[^A-Z0-9]/g, ''); }
+
+// ===== Khoanh vùng + phân tích OCR (ngang/dọc/mờ) =====
+let _verifySrc = null, _selRect = null, _selDrag = null;
+function showVerifyPane() {
+    document.getElementById('camera-video').style.display = 'none';
+    document.getElementById('camera-actions').style.display = 'none';
+    document.getElementById('verify-pane').style.display = 'flex';
+    const cnv = document.getElementById('verify-canvas');
+    cnv.width = _verifySrc.width; cnv.height = _verifySrc.height;
+    _selRect = null;
+    _drawVerify();
+    document.getElementById('camera-status').textContent = 'Kéo khoanh vùng chữ rồi bấm "Phân tích".';
+    _bindVerifySel(cnv);
+}
+function retakeVerify() {
+    document.getElementById('verify-pane').style.display = 'none';
+    document.getElementById('camera-video').style.display = '';
+    document.getElementById('camera-actions').style.display = 'flex';
+    document.getElementById('camera-status').textContent = 'Đưa camera tới chữ/số trên container rồi bấm Chụp';
+}
+function _drawVerify() {
+    const cnv = document.getElementById('verify-canvas'), ctx = cnv.getContext('2d');
+    ctx.drawImage(_verifySrc, 0, 0);
+    if (_selRect) {
+        ctx.strokeStyle = '#38a169'; ctx.lineWidth = Math.max(2, cnv.width / 200);
+        ctx.strokeRect(_selRect.x, _selRect.y, _selRect.w, _selRect.h);
+        ctx.fillStyle = 'rgba(56,161,105,0.15)'; ctx.fillRect(_selRect.x, _selRect.y, _selRect.w, _selRect.h);
+    }
+}
+function _evtToCanvas(cnv, e) {
+    const r = cnv.getBoundingClientRect();
+    const p = e.touches ? e.touches[0] : e;
+    return { x: (p.clientX - r.left) / r.width * cnv.width, y: (p.clientY - r.top) / r.height * cnv.height };
+}
+function _bindVerifySel(cnv) {
+    if (cnv._bound) return; cnv._bound = true;
+    const down = e => { e.preventDefault(); const p = _evtToCanvas(cnv, e); _selDrag = { x0: p.x, y0: p.y }; };
+    const move = e => { if (!_selDrag) return; e.preventDefault(); const p = _evtToCanvas(cnv, e);
+        _selRect = { x: Math.min(_selDrag.x0, p.x), y: Math.min(_selDrag.y0, p.y), w: Math.abs(p.x - _selDrag.x0), h: Math.abs(p.y - _selDrag.y0) }; _drawVerify(); };
+    const up = () => { _selDrag = null; if (_selRect && (_selRect.w < 8 || _selRect.h < 8)) { _selRect = null; _drawVerify(); } };
+    cnv.addEventListener('mousedown', down); cnv.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
+    cnv.addEventListener('touchstart', down, { passive: false }); cnv.addEventListener('touchmove', move, { passive: false }); window.addEventListener('touchend', up);
+}
+// Tiền xử lý: phóng to + xám + tăng tương phản (giúp ảnh mờ)
+function _preprocess(src) {
+    const scale = Math.min(3, Math.max(1, 1100 / Math.max(src.width, src.height)));
+    const c = document.createElement('canvas'); c.width = src.width * scale; c.height = src.height * scale;
+    const ctx = c.getContext('2d'); ctx.imageSmoothingEnabled = true; ctx.drawImage(src, 0, 0, c.width, c.height);
+    const img = ctx.getImageData(0, 0, c.width, c.height), d = img.data; let sum = 0;
+    for (let i = 0; i < d.length; i += 4) { const g = 0.299*d[i]+0.587*d[i+1]+0.114*d[i+2]; d[i]=d[i+1]=d[i+2]=g; sum += g; }
+    const mean = sum / (d.length / 4), k = 1.7;
+    for (let i = 0; i < d.length; i += 4) { let v = (d[i]-mean)*k+mean; v = v<0?0:v>255?255:v; d[i]=d[i+1]=d[i+2]=v; }
+    ctx.putImageData(img, 0, 0); return c;
+}
+function _rotate90(src) {
+    const c = document.createElement('canvas'); c.width = src.height; c.height = src.width;
+    const ctx = c.getContext('2d'); ctx.translate(c.width/2, c.height/2); ctx.rotate(Math.PI/2);
+    ctx.drawImage(src, -src.width/2, -src.height/2); return c;
+}
+function _cropSel() {
+    if (!_selRect) return _verifySrc;
+    const c = document.createElement('canvas'); c.width = Math.round(_selRect.w); c.height = Math.round(_selRect.h);
+    c.getContext('2d').drawImage(_verifySrc, _selRect.x, _selRect.y, _selRect.w, _selRect.h, 0, 0, c.width, c.height);
+    return c;
+}
+async function analyzeVerify() {
+    const st = document.getElementById('camera-status');
+    const errMsg = e => (e && (e.message || e.toString())) || 'không rõ';
+    st.textContent = '⏳ Đang khởi tạo OCR...';
+    let worker;
+    try {
+        worker = await Tesseract.createWorker('eng', 1, {
+            workerPath: '/lib/tesseract/worker.min.js',
+            corePath: '/lib/tesseract/',
+            langPath: '/lib/tesseract/'
+        });
+    } catch (e) { st.textContent = 'Lỗi tải OCR: ' + errMsg(e); return; }
+    try {
+        st.textContent = '⏳ Đang phân tích (chữ ngang + dọc)...';
+        const rec = async cv => { const r = await worker.recognize(cv); return (r && r.data && r.data.text) || ''; };
+        const pre = _preprocess(_cropSel());
+        let combined = await rec(pre);                                       // ngang
+        combined += ' ' + await rec(_rotate90(pre));                         // dọc
+        combined += ' ' + await rec(_rotate90(_rotate90(_rotate90(pre))));   // dọc ngược
+        const got = _norm(combined), want = _norm(_camVerifyName);
+        if (want && got.includes(want)) {
+            st.textContent = '✅ Khớp! Đang lưu ảnh...';
+            const dataUrl = _verifySrc.toDataURL('image/jpeg', 0.85);
+            if (_camVerifyCtx) { try { await fetch('/Plans/UploadPhoto', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: _camVerifyCtx.id, ci: _camVerifyCtx.ci, image: dataUrl }) }); } catch (e) {} }
+            st.textContent = '✅ Khớp & đã lưu ảnh — vào mô phỏng...';
+            const cb = _camVerifyPass; setTimeout(() => { closeCamera(); if (cb) cb(); }, 900);
+        } else {
+            st.textContent = '❌ KHÔNG đúng. Đọc được: "' + combined.trim().replace(/\s+/g, ' ').slice(0, 60) + '". Khoanh lại vùng chữ hoặc bấm Chụp lại.';
+        }
+    } catch (e) { st.textContent = 'Lỗi OCR: ' + errMsg(e); }
+    finally { try { await worker.terminate(); } catch (e) {} }
+}
+
+function openCameraVerify(name, id, ci, onPass) {
+    _camMode = 'verify'; _camVerifyName = name; _camVerifyPass = onPass; _camVerifyCtx = { id, ci };
+    document.getElementById('camera-title').textContent = '📷 Chụp xác minh container: "' + name + '"';
+    document.getElementById('camera-status').textContent = 'Đưa camera tới chữ/số trên container rồi bấm Chụp';
+    document.getElementById('camera-done-btn').style.display = 'none';
+    document.getElementById('camera-file-btn').style.display = 'none';
+    document.getElementById('verify-pane').style.display = 'none';
+    document.getElementById('camera-video').style.display = '';
+    document.getElementById('camera-actions').style.display = 'flex';
+    document.getElementById('camera-overlay').style.display = 'flex';
+    _startCam();
+}
+function openCameraArchive(id, ci, onDone) {
+    _camMode = 'archive'; _camArchive = { id, ci, onDone, count: 0 };
+    document.getElementById('camera-title').textContent = '📷 Chụp / thêm ảnh lưu trữ container';
+    document.getElementById('camera-status').textContent = 'Bấm Chụp hoặc "Ảnh có sẵn" để thêm ảnh, xong bấm Xong';
+    document.getElementById('camera-done-btn').style.display = 'inline-flex';
+    document.getElementById('camera-file-btn').style.display = 'inline-flex';
+    document.getElementById('camera-overlay').style.display = 'flex';
+    _startCam();
+}
+
+// Upload 1 ảnh (dataURL) vào container đang lưu trữ
+async function _uploadArchivePhoto(dataUrl) {
+    if (!_camArchive) return false;
+    const res = await (await fetch('/Plans/UploadPhoto', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: _camArchive.id, ci: _camArchive.ci, image: dataUrl }) })).json();
+    if (res.ok) {
+        _camArchive.count++;
+        const t = document.createElement('img'); t.src = res.url;
+        t.style.cssText = 'width:64px;height:48px;object-fit:cover;border-radius:5px;border:1px solid #444;';
+        document.getElementById('camera-thumbs').appendChild(t);
+        return true;
+    }
+    return false;
+}
+
+// Chọn ảnh CÓ SẴN từ máy/iPad → upload
+function cameraPickFiles(files) {
+    if (!files || !files.length || _camMode !== 'archive') return;
+    const st = document.getElementById('camera-status');
+    let i = 0;
+    [...files].forEach(f => {
+        const reader = new FileReader();
+        reader.onload = async () => {
+            st.textContent = '⏳ Đang tải ảnh lên...';
+            const ok = await _uploadArchivePhoto(reader.result);
+            i++;
+            st.textContent = ok ? `✅ Đã lưu ${_camArchive.count} ảnh` : 'Tải ảnh thất bại';
+        };
+        reader.readAsDataURL(f);
+    });
+    document.getElementById('camera-file').value = '';
+}
+async function cameraCapture() {
+    const cv = _grabCanvas(), st = document.getElementById('camera-status');
+    if (_camMode === 'verify') {
+        if (typeof Tesseract === 'undefined') {
+            if (confirm('Không tải được OCR (cần mạng). Bỏ qua bước xác minh?')) { const cb = _camVerifyPass; closeCamera(); if (cb) cb(); }
+            return;
+        }
+        // Lưu ảnh gốc, chuyển sang màn KHOANH VÙNG chữ
+        _verifySrc = document.createElement('canvas');
+        _verifySrc.width = cv.width; _verifySrc.height = cv.height;
+        _verifySrc.getContext('2d').drawImage(cv, 0, 0);
+        showVerifyPane();
+        return;
+    } else if (_camMode === 'archive') {
+        const dataUrl = cv.toDataURL('image/jpeg', 0.8);
+        st.textContent = '⏳ Đang lưu ảnh...';
+        try {
+            const ok = await _uploadArchivePhoto(dataUrl);
+            st.textContent = ok ? '✅ Đã lưu ' + _camArchive.count + ' ảnh' : 'Lưu ảnh thất bại';
+        } catch (e) { st.textContent = 'Lỗi lưu ảnh: ' + e.message; }
+    }
+}
+function cameraDone() {
+    if (_camMode === 'archive') {
+        if (_camArchive.count === 0 && !confirm('Chưa chụp ảnh nào. Vẫn tiếp tục?')) return;
+        const cb = _camArchive.onDone; closeCamera(); if (cb) cb();
+    }
+}
+
+// Xác nhận làm container → CHỤP XÁC MINH OCR trước → đúng mới vào mô phỏng
+let _execCtx = null;
+function startContainer(id, idx, name) {
+    openCameraVerify(name || ('Container ' + (idx + 1)), id, idx, () => _proceedContainer(id, idx));
+}
+function _proceedContainer(id, idx) {
+    openSavedContainer(id, idx);
+    _execCtx = { id, idx };
+    try { autoRotate = true; } catch (e) {} // tự xoay xem demo
+    showForkliftWatchBanner(true, 'Đang mô phỏng xếp container... hãy xem hết');
+    document.getElementById('finish-container-btn').style.display = 'none';
+    // tạo dây đai (néo) để hiển thị trong lúc mô phỏng
+    setTimeout(() => { if (typeof addLashing === 'function') try { addLashing(); } catch(e){} }, 350);
+    // xem xong mô phỏng → chuyển "đang thực hiện" + YÊU CẦU bấm xác nhận từng pallet
+    window._onForkliftDone = async function() {
+        try { autoRotate = false; } catch (e) {} // dừng xoay để bấm pallet
+        const res = await (await fetch('/Plans/StartContainer', { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body: new URLSearchParams({ id, idx }) })).json();
+        if (!res.ok) { showForkliftWatchBanner(false); alert(res.msg || 'Không thể bắt đầu container này.'); return; }
+        document.querySelectorAll(`.plan-children[data-pid="${id}"]`).forEach(c => renderPlanContainers(id, c));
+        setupPalletConfirm(id, idx);
+    };
+    setTimeout(() => { if (typeof playForkliftSim === 'function') playForkliftSim(); }, 700);
+}
+
+// Vào lại container ĐANG THỰC HIỆN để tiếp tục xác nhận pallet (không cần xem lại mô phỏng)
+function resumeContainer(id, idx) {
+    openSavedContainer(id, idx);
+    _execCtx = { id, idx };
+    setTimeout(() => { if (typeof addLashing === 'function') try { addLashing(); } catch(e){} }, 350);
+    setupPalletConfirm(id, idx);
+}
+
+// Thiết lập bước bấm xác nhận TỪNG pallet; đủ hết mới hiện nút "Đã xếp xong"
+async function setupPalletConfirm(id, idx) {
+    const b = document.getElementById('finish-container-btn');
+    b.style.display = 'none';
+    window._execPlan = { planId: id, containerIdx: idx }; // để toggleLoaded lưu DB
+    showForkliftWatchBanner(true, '👉 Bấm vào TỪNG pallet để xác nhận "đã lên", đủ hết mới được hoàn thành');
+    // Khôi phục các pallet ĐÃ lưu trước đó (chống rớt mạng / tải lại trang)
+    try {
+        const meta = await (await fetch('/Plans/Containers?id=' + id)).json();
+        const loaded = (meta.items && meta.items[idx] && meta.items[idx].loadedPallets) || [];
+        setTimeout(() => { if (typeof applyLoadedFromServer === 'function') applyLoadedFromServer(loaded); }, 500);
+    } catch (e) {}
+    window._onLoadedProgress = function(done, total, allDone) {
+        const bn = document.getElementById('fk-watch-banner');
+        if (bn && bn.querySelector('span')) bn.querySelector('span').textContent = allDone
+            ? `✅ Đã lên đủ ${done}/${total} pallet — bấm "Đã xếp xong"`
+            : `👉 Đã lên ${done}/${total} pallet — bấm tiếp các pallet còn lại`;
+        const fb = document.getElementById('finish-container-btn');
+        if (allDone) { fb.style.display = 'flex'; fb.onclick = () => finishContainer(id, idx); }
+        else fb.style.display = 'none';
+    };
+}
+
+// Bấm "Đã xếp xong" → CHỤP ẢNH LƯU TRỮ container → rồi mới đánh dấu xong
+function finishContainer(id, idx) {
+    openCameraArchive(id, idx, () => _doFinishContainer(id, idx));
+}
+async function _doFinishContainer(id, idx) {
+    const fd = new URLSearchParams({ id, idx });
+    const res = await (await fetch('/Plans/SetContainerDone', { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body: fd })).json();
+    if (!res.ok) { alert(res.msg || 'Không thể đánh dấu.'); return; }
+    document.getElementById('finish-container-btn').style.display = 'none';
+    showForkliftWatchBanner(false);
+    window._onLoadedProgress = null;
+    window._execPlan = null;
+    _execCtx = null;
+    alert('✅ Đã xác nhận xếp xong container này!');
+    document.querySelectorAll(`.plan-children[data-pid="${id}"]`).forEach(c => renderPlanContainers(id, c));
+}
+
+function showForkliftWatchBanner(show, text) {
+    let el = document.getElementById('fk-watch-banner');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'fk-watch-banner';
+        el.style.cssText = 'position:absolute;top:110px;left:50%;transform:translateX(-50%);background:rgba(237,137,54,0.95);color:#1a1a1a;font-weight:700;padding:8px 14px;border-radius:20px;z-index:60;font-size:13px;display:flex;align-items:center;gap:10px;';
+        document.querySelector('.viewer-container')?.appendChild(el);
+    }
+    el.innerHTML = `<span>${text || ''}</span>`;
+    el.style.display = show ? 'flex' : 'none';
+}
 </script>
 }
 

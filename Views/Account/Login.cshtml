@@ -1,0 +1,22 @@
+@{
+    Layout = "_LayoutAdmin";
+    ViewData["Title"] = "Đăng nhập";
+}
+<div class="auth-wrap">
+    <form class="login-card" method="post" action="/Account/Login">
+        @Html.AntiForgeryToken()
+        <input type="hidden" name="returnUrl" value="@ViewBag.ReturnUrl" />
+        <div class="logo"><img src="/images/logo.png" alt="Logo" style="width:60%" /></div>
+
+        @if (ViewBag.Error != null)
+        {
+            <div class="err">@ViewBag.Error</div>
+        }
+
+        <label>Tài khoản</label>
+        <input name="username" autofocus autocomplete="username" required />
+        <label>Mật khẩu</label>
+        <input name="password" type="password" autocomplete="current-password" required />
+        <button type="submit">Đăng nhập</button>
+    </form>
+</div>

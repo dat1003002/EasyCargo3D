@@ -9,9 +9,38 @@ namespace EasyCargo3D.Data
 
         public DbSet<ContainerType> ContainerTypes { get; set; }
         public DbSet<PalletType>    PalletTypes    { get; set; }
+        public DbSet<AppUser>       Users          { get; set; }
+        public DbSet<Workshop>      Workshops      { get; set; }
+        public DbSet<UserWorkshop>  UserWorkshops  { get; set; }
+        public DbSet<PlanEntity>    Plans          { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
+            // ── Người dùng / Xưởng / Phân quyền ──
+            modelBuilder.Entity<AppUser>(e =>
+            {
+                e.HasIndex(x => x.Username).IsUnique();
+                e.Property(x => x.Username).HasMaxLength(80);
+                e.Property(x => x.Role).HasMaxLength(20);
+            });
+            modelBuilder.Entity<Workshop>(e =>
+            {
+                e.HasIndex(x => x.Code).IsUnique();
+                e.Property(x => x.Name).HasMaxLength(120);
+            });
+            modelBuilder.Entity<UserWorkshop>(e =>
+            {
+                e.HasKey(x => new { x.UserId, x.WorkshopId });
+                e.HasOne(x => x.User).WithMany(u => u.UserWorkshops).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+                e.HasOne(x => x.Workshop).WithMany(w => w.UserWorkshops).HasForeignKey(x => x.WorkshopId).OnDelete(DeleteBehavior.Cascade);
+            });
+            modelBuilder.Entity<PlanEntity>(e =>
+            {
+                e.HasOne(x => x.Workshop).WithMany().HasForeignKey(x => x.WorkshopId).OnDelete(DeleteBehavior.Restrict);
+                e.HasOne(x => x.CreatedBy).WithMany().HasForeignKey(x => x.CreatedById).OnDelete(DeleteBehavior.Restrict);
+                e.HasOne(x => x.Assignee).WithMany().HasForeignKey(x => x.AssigneeId).OnDelete(DeleteBehavior.SetNull);
+            });
+
             modelBuilder.Entity<ContainerType>(e =>
             {
                 e.HasIndex(x => x.Code).IsUnique();

@@ -32,38 +32,62 @@ async function loadContainersFromAPI() {
 function initContainerCards() {
     const grid = document.getElementById('container-grid');
     grid.innerHTML = '';
+    const canManage = (window.APP_CAN_MANAGE !== false);
     Object.entries(CONTAINERS).forEach(([key, c]) => {
         const card = document.createElement('div');
         card.className = 'container-type-card' + (key === selectedContainer ? ' active' : '');
-        card.innerHTML = `
-            <div class="c-icon">${c.icon}</div>
-            <div class="c-name">${c.name}</div>
-            <div class="c-size">${c.length}×${c.width}×${c.height} cm</div>
+        const actions = canManage ? `
             <div class="c-actions">
                 <button class="c-btn-edit" onclick="event.stopPropagation();openEditContainerModal('${key}')" title="Sửa"><i class="fas fa-edit"></i></button>
                 <button class="c-btn-del"  onclick="event.stopPropagation();deleteContainer('${key}')"  title="Xóa"><i class="fas fa-trash"></i></button>
-            </div>`;
+            </div>` : '';
+        card.innerHTML = `
+            <div class="c-icon">${c.icon}</div>
+            <div class="c-name">${c.name}</div>
+            <div class="c-size">${c.length}×${c.width}×${c.height} cm</div>${actions}`;
         card.onclick = () => selectContainer(key);
         grid.appendChild(card);
     });
-    // Nút thêm mới
-    const addCard = document.createElement('div');
-    addCard.className = 'container-type-card container-add-card';
-    addCard.innerHTML = `<div class="c-icon">&#x2795;</div><div class="c-name">Thêm mới</div>`;
-    addCard.onclick = () => openAddContainerModal();
-    grid.appendChild(addCard);
+    // Nút thêm mới — chỉ Quản lý/Admin
+    if (canManage) {
+        const addCard = document.createElement('div');
+        addCard.className = 'container-type-card container-add-card';
+        addCard.innerHTML = `<div class="c-icon">&#x2795;</div><div class="c-name">Thêm mới</div>`;
+        addCard.onclick = () => openAddContainerModal();
+        grid.appendChild(addCard);
+    }
 
     // Cập nhật dropdown trong tab Import
     const sel = document.getElementById('import-container-type');
     if (sel) {
+        const prev = sel.value; // giữ lựa chọn cũ nếu có
         sel.innerHTML = '';
+        // Placeholder bắt buộc chọn (tránh nhầm)
+        const ph = document.createElement('option');
+        ph.value = ''; ph.textContent = '— Chọn loại container —';
+        ph.disabled = true;
+        sel.appendChild(ph);
+        Object.entries(CONTAINERS).forEach(([key, c]) => {
+            const opt = document.createElement('option');
+            opt.value = key;
+            opt.textContent = c.name; // chỉ hiển thị tên
+            sel.appendChild(opt);
+        });
+        // Khôi phục lựa chọn cũ, nếu chưa chọn thì để trống ở placeholder
+        sel.value = (prev && CONTAINERS[prev]) ? prev : '';
+        if (!sel.value) ph.selected = true;
+    }
+    // Dropdown chọn loại để THÊM vào danh sách ưu tiên
+    const pick = document.getElementById('ctype-pick');
+    if (pick) {
+        pick.innerHTML = '';
         Object.entries(CONTAINERS).forEach(([key, c]) => {
             const opt = document.createElement('option');
             opt.value = key; opt.textContent = c.name;
-            if (key === selectedContainer) opt.selected = true;
-            sel.appendChild(opt);
+            pick.appendChild(opt);
         });
     }
+    renderCtypeList();
     updateContainerSpecs();
     if (window.onImportContainerChange) window.onImportContainerChange();
 }
@@ -92,35 +116,75 @@ function updateContainerSpecs() {
 // ==================== THREE.JS SETUP ====================
 const canvas = document.getElementById('three-canvas');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
-renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputEncoding = THREE.sRGBEncoding;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.2;
+renderer.toneMappingExposure = 1.15;
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x1a1f2e);
-// fog tắt để zoom out không bị mờ container
 
-const camera = new THREE.PerspectiveCamera(45, 1, 1, 50000);
+// Nền gradient studio (xanh đậm → xanh tím nhạt)
+(function() {
+    const cv = document.createElement('canvas'); cv.width = 2; cv.height = 256;
+    const c = cv.getContext('2d');
+    const g = c.createLinearGradient(0, 0, 0, 256);
+    g.addColorStop(0,   '#243049');
+    g.addColorStop(0.5, '#1a2235');
+    g.addColorStop(1,   '#0e1320');
+    c.fillStyle = g; c.fillRect(0, 0, 2, 256);
+    const tex = new THREE.CanvasTexture(cv);
+    if (THREE.SRGBColorSpace) tex.colorSpace = THREE.SRGBColorSpace;
+    else tex.encoding = THREE.sRGBEncoding;
+    scene.background = tex;
+})();
+
+// near=10/far=12000: tỉ lệ nhỏ → depth buffer chính xác, hết nháy khung (z-fighting)
+const camera = new THREE.PerspectiveCamera(45, 1, 10, 12000);
 camera.position.set(800, 600, 900);
 camera.lookAt(0, 0, 0);
 
-// Lighting
-const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+// ── Lighting studio 3 điểm ──
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.45);
 scene.add(ambientLight);
-const hemiLight = new THREE.HemisphereLight(0x8ab4f8, 0x3a3a3a, 0.6);
+// Trời/đất: xanh trời trên, ấm dưới
+const hemiLight = new THREE.HemisphereLight(0xbcd6ff, 0x2a2f3a, 0.75);
 scene.add(hemiLight);
-const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
-dirLight.position.set(500, 800, 500);
+// Key light (chính, ấm nhẹ) — đổ bóng mềm
+const dirLight = new THREE.DirectionalLight(0xfff4e6, 1.35);
+dirLight.position.set(600, 950, 500);
 dirLight.castShadow = true;
+dirLight.shadow.mapSize.set(2048, 2048);
+dirLight.shadow.camera.near = 100;
+dirLight.shadow.camera.far = 4000;
+dirLight.shadow.camera.left = -1500;
+dirLight.shadow.camera.right = 1500;
+dirLight.shadow.camera.top = 1500;
+dirLight.shadow.camera.bottom = -1500;
+dirLight.shadow.bias = -0.0004;
+dirLight.shadow.radius = 4;
 scene.add(dirLight);
-const dirLight2 = new THREE.DirectionalLight(0x4466ff, 0.3);
-dirLight2.position.set(-500, 300, -500);
+// Fill light (lạnh, đối diện) — làm dịu vùng tối
+const dirLight2 = new THREE.DirectionalLight(0x6688cc, 0.45);
+dirLight2.position.set(-600, 350, -500);
 scene.add(dirLight2);
+// Rim light (viền sau) — tách container khỏi nền
+const rimLight = new THREE.DirectionalLight(0xaaccff, 0.5);
+rimLight.position.set(-200, 400, -800);
+scene.add(rimLight);
 
-const gridHelper = new THREE.GridHelper(3000, 60, 0x2d3748, 0x2d3748);
+// ── Mặt sàn nhận bóng (shadow catcher) ──
+const groundMat = new THREE.ShadowMaterial({ opacity: 0.28 });
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(8000, 8000), groundMat);
+ground.rotation.x = -Math.PI / 2;
+ground.position.y = -0.5;
+ground.receiveShadow = true;
+scene.add(ground);
+
+const gridHelper = new THREE.GridHelper(3000, 60, 0x3a4866, 0x232b3d);
+gridHelper.material.transparent = true;
+gridHelper.material.opacity = 0.6;
 scene.add(gridHelper);
 
 const gltfLoader = new THREE.GLTFLoader ? new THREE.GLTFLoader() : null;
@@ -356,6 +420,46 @@ if (window.ResizeObserver) {
 setTimeout(resizeRenderer, 100);
 
 // ==================== ANIMATE LOOP ====================
+// Ẩn tường nào đang quay mặt về camera (cutaway động) để nhìn rõ pallet bên trong
+let cutawayWalls = []; // danh sách tường để ẩn/hiện theo hướng camera
+let forkliftGroup = null, forkCarriage = null, forkliftAnim = null; // mô phỏng xe nâng
+let containerDoors = []; // {group, open} — cửa sau để đóng/mở
+let doorsClosed = false; // true khi đã lên đủ pallet → cửa đóng
+let lockMats = [];       // vật liệu góc/khung/cửa để phát sáng khi khóa
+
+// Đóng/mở cửa + niêm phong (góc phát sáng) theo trạng thái doorsClosed
+function applyDoorState() {
+    containerDoors.forEach(d => {
+        d.group.rotation.y = doorsClosed ? 0 : d.open;
+        // Cửa đóng → đổ bóng như khối kín
+        d.group.traverse(o => { if (o.isMesh) o.castShadow = doorsClosed; });
+    });
+    // Tường (2 bên + mái + trước): đóng → đổ bóng đầy đủ; mở → tắt (tránh bóng đen sai)
+    cutawayWalls.forEach(w => { w.mesh.castShadow = doorsClosed; });
+    // Khi đủ pallet & cửa đóng → các góc/khung/cửa phát sáng xanh = đã niêm phong
+    const glow = new THREE.Color(doorsClosed ? 0x21a85a : 0x000000);
+    lockMats.forEach(m => {
+        if (!m) return;
+        m.emissive = glow;
+        m.emissiveIntensity = doorsClosed ? 0.7 : 0;
+        m.needsUpdate = true;
+    });
+}
+const _toCam = new THREE.Vector3();
+function updateCutaway() {
+    if (!cutawayWalls.length) return;
+    // Đã đóng container (đủ pallet) → giữ kín, hiện hết tường, không ẩn khi xoay
+    if (doorsClosed) {
+        for (const w of cutawayWalls) w.mesh.visible = true;
+        return;
+    }
+    for (const w of cutawayWalls) {
+        _toCam.copy(camera.position).sub(w.center);
+        // normal hướng về camera (dot > 0) → tường chắn tầm nhìn → ẩn
+        w.mesh.visible = _toCam.dot(w.normal) <= 0;
+    }
+}
+
 function animate() {
     requestAnimationFrame(animate);
     if (autoRotate) {
@@ -371,6 +475,8 @@ function animate() {
         camera.updateProjectionMatrix();
     }
     // Với top/front/side: camera đã được set cố định trong setView, chỉ cần render
+    updateCutaway();
+    updateForklift(performance.now());
     renderer.render(scene, camera);
 }
 animate();
@@ -379,78 +485,249 @@ animate();
 let containerGroup = null;
 
 function buildContainer(L, W, H) {
-    if (containerGroup) { scene.remove(containerGroup); }
+    if (containerGroup) { scene.remove(containerGroup); containerGroup = null; }
     containerGroup = new THREE.Group();
 
-    function mat(color, opacity, side) {
-        return new THREE.MeshPhysicalMaterial({
-            color, transparent: opacity < 1, opacity,
-            roughness: 0.4, metalness: 0.3,
-            side: side !== undefined ? side : THREE.FrontSide,
-            depthWrite: opacity >= 1
-        });
-    }
+    const fw = 8; // độ rộng khung thép
+    const yBot = -H/2, yTop = H/2;
 
-    // BackSide: mặt quay về camera bị ẩn → nhìn từ ngoài xuyên thấy vào trong
-    const WALL_MAT   = mat(0x2a3a4a, 0.18, THREE.BackSide);
-    const RIB_MAT    = mat(0x4a6070, 0.45, THREE.BackSide);
-    const ROOF_MAT   = mat(0x2a3a4a, 0.15, THREE.BackSide);
-    const FLOOR_MAT  = mat(0x7a5a1a, 1.0,  THREE.FrontSide);
-    const CORNER_MAT = mat(0x8899aa, 1.0,  THREE.DoubleSide);
-    const FRONT_MAT  = mat(0x2a3a4a, 0.15, THREE.BackSide);
-    const EDGE_MAT   = mat(0xaabbcc, 1.0,  THREE.DoubleSide);
-
+    // ── Helper ──
     function addBox(w, h, d, m, x, y, z) {
         const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
         mesh.position.set(x, y, z);
         mesh.castShadow = true; mesh.receiveShadow = true;
-        containerGroup.add(mesh);
-        return mesh;
+        containerGroup.add(mesh); return mesh;
     }
 
-    // Sàn gỗ (đặc)
-    addBox(L, 3, W, FLOOR_MAT, 0, -H/2 + 1.5, 0);
+    // ── Texture sàn gỗ (bamboo/hardwood planks) ──
+    function makeFloorTex() {
+        const cw = 512, ch = 128;
+        const cv = document.createElement('canvas'); cv.width = cw; cv.height = ch;
+        const c  = cv.getContext('2d');
+        const plankW = Math.round(cw / 8);
+        for (let i = 0; i < 8; i++) {
+            const hue = 28 + (i % 3) * 4;
+            const lum = 28 + (i % 2) * 5;
+            c.fillStyle = `hsl(${hue},52%,${lum}%)`;
+            c.fillRect(i * plankW, 0, plankW - 1, ch);
+            // grain lines
+            c.strokeStyle = `hsla(${hue},40%,${lum-8}%,0.4)`;
+            c.lineWidth = 1;
+            for (let y = 6; y < ch; y += 12 + Math.random() * 6) {
+                c.beginPath(); c.moveTo(i*plankW, y); c.lineTo(i*plankW+plankW-1, y + (Math.random()-0.5)*4); c.stroke();
+            }
+        }
+        // joint lines
+        c.fillStyle = 'rgba(0,0,0,0.35)';
+        for (let i = 1; i < 8; i++) c.fillRect(i*plankW-1, 0, 2, ch);
+        const t = new THREE.CanvasTexture(cv);
+        t.wrapS = THREE.RepeatWrapping; t.repeat.x = Math.ceil(L / 64);
+        return t;
+    }
 
-    // Tường hai bên + sọc dọc
-    [-W/2, W/2].forEach(z => {
-        addBox(L, H, 2, WALL_MAT, 0, 0, z);
-        for (let x = -L/2; x <= L/2; x += 60) addBox(4, H, 3, RIB_MAT, x, 0, z);
+    // ── Texture sóng corrugated thép xanh (sóng đứng) ──
+    function makeCorrugatedTex(panelW, panelH, r, g, b, repV) {
+        const cw = 256, ch = 128;
+        const cv = document.createElement('canvas'); cv.width = cw; cv.height = ch;
+        const c  = cv.getContext('2d');
+        c.fillStyle = `rgb(${r},${g},${b})`; c.fillRect(0, 0, cw, ch);
+        // corrugation ridges (vertical stripes) — biên độ rõ hơn cho giống ảnh
+        const period = 18;
+        for (let x = 0; x < cw; x++) {
+            const t = (x % period) / period;
+            const shade = Math.round(Math.sin(t * Math.PI * 2) * 30);
+            const rr = Math.max(0, Math.min(255, r + shade));
+            const gg = Math.max(0, Math.min(255, g + shade));
+            const bb = Math.max(0, Math.min(255, b + shade));
+            c.fillStyle = `rgb(${rr},${gg},${bb})`;
+            c.fillRect(x, 0, 1, ch);
+        }
+        const tex = new THREE.CanvasTexture(cv);
+        tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
+        tex.repeat.set(Math.ceil(panelW / 24), repV || 1);
+        return tex;
+    }
+
+    // ── Texture sọc cảnh báo vàng/đen (chéo) ──
+    function makeHazardTex(rep) {
+        const s = 64;
+        const cv = document.createElement('canvas'); cv.width = s; cv.height = s;
+        const c = cv.getContext('2d');
+        c.fillStyle = '#f2c200'; c.fillRect(0, 0, s, s);
+        c.fillStyle = '#1a1a1a'; c.lineWidth = 0;
+        for (let i = -s; i < s * 2; i += s/2) {
+            c.beginPath();
+            c.moveTo(i, 0); c.lineTo(i + s/4, 0);
+            c.lineTo(i + s/4 - s, s); c.lineTo(i - s, s);
+            c.closePath(); c.fill();
+        }
+        const t = new THREE.CanvasTexture(cv);
+        t.wrapS = THREE.RepeatWrapping; t.repeat.set(rep || 6, 1);
+        return t;
+    }
+
+    // ── Màu xanh nhạt (kết hợp: corrugated nhẹ + trong suốt để nhìn rõ pallet) ──
+    const cBlue   = [120, 175, 220];  // xanh nhạt sáng
+    const cBlueDk = [100, 155, 200];  // mái/cửa tối hơn chút
+    const floorMat = new THREE.MeshStandardMaterial({ color: 0x8fbfe0, roughness: 0.75, metalness: 0.15, transparent: true, opacity: 0.85 });
+    const frameMat = new THREE.MeshStandardMaterial({ color: 0x3f8fcc, roughness: 0.45, metalness: 0.55 });
+    const cornerMat= new THREE.MeshStandardMaterial({ color: 0xc8d2da, roughness: 0.35, metalness: 0.8 });
+    const hazardMat= new THREE.MeshStandardMaterial({ map: makeHazardTex(8), roughness: 0.6, metalness: 0.2 });
+    const hingeMat = new THREE.MeshStandardMaterial({ color: 0xdfe6ec, roughness: 0.4, metalness: 0.85 });
+    const lockbarMat=new THREE.MeshStandardMaterial({ color: 0xe6ecf2, roughness: 0.3, metalness: 0.9 });
+
+    // Tường ngoài: BackSide để nhìn xuyên vào trong, opacity thấp → vẫn thấy rõ pallet
+    function wallMat(panelW, panelH) {
+        return new THREE.MeshStandardMaterial({
+            map: makeCorrugatedTex(panelW, panelH, ...cBlue, 1),
+            roughness: 0.5, metalness: 0.45,
+            side: THREE.BackSide, transparent: true, opacity: 0.32, depthWrite: false
+        });
+    }
+    const roofMat = new THREE.MeshStandardMaterial({
+        map: makeCorrugatedTex(W, L, ...cBlueDk, Math.ceil(L/24)),
+        roughness: 0.5, metalness: 0.45,
+        side: THREE.BackSide, transparent: true, opacity: 0.25, depthWrite: false
+    });
+    const frontMat = new THREE.MeshStandardMaterial({
+        map: makeCorrugatedTex(W, H, ...cBlue, 1),
+        roughness: 0.5, metalness: 0.45,
+        side: THREE.BackSide, transparent: true, opacity: 0.32, depthWrite: false
+    });
+    // Cửa: bán trong suốt nhẹ (mở ra ngoài, không che pallet nên đậm hơn chút)
+    const doorPanelMat = new THREE.MeshStandardMaterial({
+        map: makeCorrugatedTex(W/2, H, ...cBlueDk, 1),
+        roughness: 0.5, metalness: 0.5,
+        transparent: true, opacity: 0.75
+    });
+    const doorRibMat = new THREE.MeshStandardMaterial({ color: 0x3f8fcc, roughness: 0.45, metalness: 0.55 });
+
+    // Vật liệu sẽ phát sáng khi container đã niêm phong (đủ pallet + đóng cửa)
+    lockMats = [cornerMat, frameMat, doorPanelMat, doorRibMat];
+
+    // Tường sát mép trong container (khớp với không gian xếp hàng W×L) để pallet không thò ra
+    const wallZ = W/2 - 0.75;
+
+    // ── Sàn (rộng đúng bằng lòng container) ──
+    addBox(L, 5, W, floorMat, 0, yBot + 2.5, 0);
+
+    // Reset danh sách tường cho cutaway động (ẩn tường quay về camera)
+    cutawayWalls = [];
+    containerDoors = [];
+    const cy = H / 2; // containerGroup dịch lên H/2 → toạ độ world theo Y
+
+    // ── Hai tường bên (corrugated xanh) — không đổ bóng (tường trong suốt) ──
+    [-wallZ, wallZ].forEach(z => {
+        const m = addBox(L, H - fw*2, 1.5, wallMat(L, H), 0, 0, z);
+        m.castShadow = false;
+        cutawayWalls.push({ mesh: m, normal: new THREE.Vector3(0, 0, Math.sign(z)), center: new THREE.Vector3(0, cy, z) });
     });
 
-    // Mái + sọc ngang
-    addBox(L, 2, W, ROOF_MAT, 0, H/2 - 1, 0);
-    for (let x = -L/2; x <= L/2; x += 120) addBox(4, 3, W, RIB_MAT, x, H/2 - 1.5, 0);
+    // ── Mái (sóng ngang) — không đổ bóng ──
+    const roofM = addBox(L, 1.5, W, roofMat, 0, yTop - 0.75, 0);
+    roofM.castShadow = false;
+    cutawayWalls.push({ mesh: roofM, normal: new THREE.Vector3(0, 1, 0), center: new THREE.Vector3(0, cy + yTop - 0.75, 0) });
 
-    // Tường trước
-    addBox(2, H, W, FRONT_MAT, -L/2 + 1, 0, 0);
+    // ── Tường trước — sát mép trong, không đổ bóng ──
+    const frontX = -L/2 + 0.75;
+    const frontM = addBox(1.5, H - fw*2, W, frontMat, frontX, 0, 0);
+    frontM.castShadow = false;
+    cutawayWalls.push({ mesh: frontM, normal: new THREE.Vector3(-1, 0, 0), center: new THREE.Vector3(frontX, cy, 0) });
 
-    // Khung cửa sau
-    const dfw = 8;
-    addBox(dfw, H, dfw, CORNER_MAT, L/2 - dfw/2, 0, -W/2 + dfw/2);
-    addBox(dfw, H, dfw, CORNER_MAT, L/2 - dfw/2, 0,  W/2 - dfw/2);
-    addBox(dfw, dfw, W, CORNER_MAT, L/2 - dfw/2,  H/2 - dfw/2, 0);
-    addBox(dfw, dfw, W, CORNER_MAT, L/2 - dfw/2, -H/2 + dfw/2, 0);
+    // ── 4 trụ cột góc dọc ──
+    [[-L/2, -W/2], [-L/2, W/2], [L/2, -W/2], [L/2, W/2]].forEach(([x, z]) => {
+        addBox(fw, H, fw, frameMat,
+            x + (x < 0 ? fw/2 : -fw/2),
+            0,
+            z + (z < 0 ? fw/2 : -fw/2));
+    });
 
-    // Cửa mở 90°
-    const doorMat = mat(0xa0b8c8, 0.35);
+    // ── 4 thanh ngang trên/dưới theo chiều dài ──
+    [[-W/2, yBot], [W/2, yBot], [-W/2, yTop], [W/2, yTop]].forEach(([z, y]) => {
+        addBox(L - fw*2, fw, fw, frameMat,
+            0,
+            y + (y < 0 ? fw/2 : -fw/2),
+            z + (z < 0 ? fw/2 : -fw/2));
+    });
+
+    // ── 4 thanh ngang trên/dưới theo chiều rộng ──
+    [[-L/2, yBot], [L/2, yBot], [-L/2, yTop], [L/2, yTop]].forEach(([x, y]) => {
+        addBox(fw, fw, W - fw*2, frameMat,
+            x + (x < 0 ? fw/2 : -fw/2),
+            y + (y < 0 ? fw/2 : -fw/2),
+            0);
+    });
+
+    // ── 8 khối góc casting ──
+    [[-L/2,-W/2], [-L/2,W/2], [L/2,-W/2], [L/2,W/2]].forEach(([x,z]) => {
+        [yBot, yTop].forEach(y => {
+            const cx = x + (x<0 ? fw/2 : -fw/2);
+            const cy = y + (y<0 ? fw/2 : -fw/2);
+            const cz = z + (z<0 ? fw/2 : -fw/2);
+            addBox(fw+6, fw+6, fw+6, cornerMat, cx, cy, cz);
+        });
+    });
+
+    // ── Sọc cảnh báo vàng/đen trên xà ngang cửa sau (giống ảnh) ──
+    addBox(fw+1, fw*0.7, W - fw*2, hazardMat, L/2 - fw/2, yTop - fw/2, 0);
+
+    // ── Cửa sau 2 cánh mở rộng ~125° ──
+    const doorW = (W - fw*2) / 2 - 1;
+    const doorH = H - fw*2;
+
     [-1, 1].forEach(side => {
-        const door = new THREE.Mesh(new THREE.BoxGeometry(2, H - 20, W/2 - dfw), doorMat);
-        door.position.set(L/2 + W/4 - dfw/2, 0, side * (W/2 + dfw/2));
-        door.rotation.y = side * Math.PI / 2;
-        containerGroup.add(door);
+        const pivotX = L/2 - fw/2;
+        const pivotZ = side * (W/2 - fw/2);
+
+        const cg = new THREE.Group();
+        cg.position.set(pivotX, 0, pivotZ);
+
+        // Cửa trong local: nằm dọc trục Z, tâm cách bản lề doorW/2
+        const localCZ = -side * (doorW/2 + 1);
+
+        // Tấm cửa chính (corrugated xanh)
+        const panel = new THREE.Mesh(new THREE.BoxGeometry(3.5, doorH, doorW), doorPanelMat);
+        panel.position.set(0, 0, localCZ);
+        cg.add(panel);
+
+        // 4 panel ngang nổi (giống ảnh: cửa chia 4 ô)
+        for (const dyf of [-0.36, -0.12, 0.12, 0.36]) {
+            const rib = new THREE.Mesh(new THREE.BoxGeometry(5, doorH*0.16, doorW - 6), doorRibMat);
+            rib.position.set(side*2, dyf * doorH, localCZ);
+            cg.add(rib);
+        }
+
+        // 2 thanh khóa dọc
+        for (const zf of [0.28, 0.62]) {
+            const bar = new THREE.Mesh(new THREE.CylinderGeometry(2, 2, doorH * 0.82, 8), lockbarMat);
+            bar.position.set(3, 0, localCZ - side * doorW * (zf - 0.5));
+            cg.add(bar);
+            // tay nắm
+            const h = new THREE.Mesh(new THREE.BoxGeometry(5, 10, 4), lockbarMat);
+            h.position.set(5, -doorH*0.04, localCZ - side * doorW * (zf - 0.5));
+            cg.add(h);
+        }
+
+        // 4 bản lề tại pivot
+        for (const dy of [-doorH*0.38, -doorH*0.13, doorH*0.13, doorH*0.38]) {
+            const h1 = new THREE.Mesh(new THREE.BoxGeometry(7, 10, 7), hingeMat);
+            h1.position.set(-2, dy, 0);
+            cg.add(h1);
+        }
+
+        // Mở ~125° ra ngoài
+        const openAngle = -side * Math.PI * 0.7;
+        cg.rotation.y = openAngle;
+        containerGroup.add(cg);
+        containerDoors.push({ group: cg, open: openAngle });
     });
+    applyDoorState(); // giữ trạng thái cửa (đóng nếu đã lên đủ)
 
-    // 8 góc casting
-    [[-L/2,-W/2],[-L/2,W/2],[L/2,-W/2],[L/2,W/2]].forEach(([x,z]) => {
-        [-H/2, H/2].forEach(y => addBox(20, 20, 20, CORNER_MAT, x, y, z));
-    });
+    // ── Đèn nội thất nhẹ ──
+    const intLight = new THREE.PointLight(0xfff5e0, 0.35, L);
+    intLight.position.set(0, yTop - 15, 0);
+    containerGroup.add(intLight);
 
-    // 12 cạnh khung
-    [[-W/2,-H/2],[-W/2,H/2],[W/2,-H/2],[W/2,H/2]].forEach(([z,y]) => addBox(L,5,5,EDGE_MAT,0,y,z));
-    [[-L/2,-H/2],[-L/2,H/2],[L/2,-H/2],[L/2,H/2]].forEach(([x,y]) => addBox(5,5,W,EDGE_MAT,x,y,0));
-    [[-L/2,-W/2],[-L/2,W/2],[L/2,-W/2],[L/2,W/2]].forEach(([x,z]) => addBox(5,H,5,EDGE_MAT,x,0,z));
-
-    // Đẩy toàn bộ container lên để đáy nằm trên lưới (y=0)
     containerGroup.position.y = H / 2;
     scene.add(containerGroup);
 }
@@ -462,8 +739,26 @@ function contrastColor() {
     return '#111111';
 }
 
+// Tách tên thành tối đa 2 dòng (ưu tiên cắt tại _ - khoảng trắng gần giữa, không thì cắt đôi)
+function wrapTwoLines(name) {
+    name = String(name || '');
+    if (name.length <= 9) return [name];
+    const mid = Math.floor(name.length / 2);
+    const seps = ['_', '-', ' '];
+    let best = -1, bestDist = 1e9;
+    for (let i = 1; i < name.length - 1; i++) {
+        if (seps.includes(name[i])) {
+            const d = Math.abs(i - mid);
+            if (d < bestDist) { bestDist = d; best = i; }
+        }
+    }
+    if (best > 0 && bestDist <= name.length * 0.35)
+        return [name.slice(0, best + 1), name.slice(best + 1)];
+    return [name.slice(0, mid), name.slice(mid)]; // cắt đôi cho cân
+}
+
 function drawFaceCanvas(item, isTop) {
-    const S   = 256;
+    const S   = 320;
     const cvs = document.createElement('canvas');
     cvs.width = S; cvs.height = S;
     const ctx = cvs.getContext('2d');
@@ -489,30 +784,38 @@ function drawFaceCanvas(item, isTop) {
     ctx.lineWidth = 12;
     ctx.strokeRect(6, 6, S-12, S-12);
 
-    // Tên item
-    const centerY = isTop ? S/2 - 12 : S/2;
-    let fontSize  = isTop ? 68 : 82;
-    ctx.font = `bold ${fontSize}px Arial,sans-serif`;
-    while (ctx.measureText(item.name).width > S - 32 && fontSize > 14) {
-        fontSize -= 3;
+    // Tên item — chữ TO, ĐEN, tự xuống tối đa 2 dòng cho dễ nhìn
+    const lines   = wrapTwoLines(item.name);
+    const pad     = 26;
+    const maxW    = S - pad * 2;
+    const lineGap = 1.12;
+    const dimH    = isTop ? 42 : 0; // chừa chỗ cho dòng kích thước ở mặt trên
+    let fontSize  = 132; // bắt đầu thật to rồi thu cho vừa
+    const fits = () => {
         ctx.font = `bold ${fontSize}px Arial,sans-serif`;
-    }
+        const widest = Math.max(...lines.map(l => ctx.measureText(l).width));
+        const totalH = lines.length * fontSize * lineGap + dimH;
+        return widest <= maxW && totalH <= S - pad * 2;
+    };
+    while (!fits() && fontSize > 18) fontSize -= 2;
+    ctx.font = `bold ${fontSize}px Arial,sans-serif`;
     ctx.textAlign    = 'center';
     ctx.textBaseline = 'middle';
 
-    // Chữ đen, không stroke trắng
-    ctx.fillStyle = '#111111';
-    ctx.fillText(item.name, S/2, centerY);
+    const lh       = fontSize * lineGap;
+    const blockH   = lines.length * lh;
+    const centerY  = isTop ? S/2 - dimH/2 : S/2;
+    const firstY   = centerY - (blockH - lh) / 2;
+
+    ctx.fillStyle = '#000000'; // chữ đen đậm
+    lines.forEach((ln, i) => ctx.fillText(ln, S/2, firstY + i * lh));
 
     if (isTop) {
         // Mặt trên: kích thước D×R bên dưới tên
         const dimText = `${item.length}×${item.width} cm`;
-        const df      = 20;
-        ctx.font      = `bold ${df}px Arial,sans-serif`;
-        ctx.fillStyle   = '#111111';
-        ctx.globalAlpha = 0.8;
-        ctx.fillText(dimText, S/2, centerY + fontSize/2 + 16);
-        ctx.globalAlpha = 1;
+        ctx.font      = `bold 24px Arial,sans-serif`;
+        ctx.fillStyle = '#000000';
+        ctx.fillText(dimText, S/2, firstY + blockH + 6);
     }
 
     const tex = new THREE.CanvasTexture(cvs);
@@ -631,13 +934,15 @@ function renderCargo(plan) {
     const C = plan.container;
     const offX = -C.length / 2, offY = 0, offZ = -C.width / 2;
 
-    plan.packedItems.forEach(pi => {
+    plan.packedItems.forEach((pi, _palletIdx) => {
         const item = pi.item;
         const rotated = (pi.rotationY === 90 || pi.rotationY === 270);
         const L = rotated ? item.width  : item.length;
         const W = rotated ? item.length : item.width;
         const H = item.height;
-        const geo = new THREE.BoxGeometry(L, H, W);
+        // Thu nhỏ hình hiển thị ~0.8cm để các hộp kề nhau không trùng mặt phẳng → hết chớp (z-fighting)
+        const GAP = 0.8;
+        const geo = new THREE.BoxGeometry(Math.max(L - GAP, 1), Math.max(H - GAP, 1), Math.max(W - GAP, 1));
 
         let materials;
         if (item.isWood) {
@@ -653,6 +958,8 @@ function renderCargo(plan) {
         const cx = offX + pi.x + L/2, cy = offY + pi.y + H/2, cz = offZ + pi.z + W/2;
         mesh.position.set(cx, cy, cz);
         mesh.castShadow = true; mesh.receiveShadow = true;
+        mesh.userData.pi = pi; // tham chiếu pallet (cho animation băng tải)
+        mesh.userData.idx = _palletIdx; // chỉ số trong packedItems (để lưu trạng thái đã lên)
 
         const edgeColor = item.isWood ? 0x5C3A1E : 0x000000;
         const edgeOpacity = item.isWood ? 0.8 : 0.5;
@@ -664,6 +971,9 @@ function renderCargo(plan) {
         cargoGroup.add(mesh);
     });
 
+    // Vị trí đã được căn giữa sẵn trong thuật toán xếp → không dịch thêm
+    cargoGroup.position.set(0, 0, 0);
+
     scene.add(cargoGroup);
 }
 
@@ -671,6 +981,9 @@ function renderCargo(plan) {
 function renderScene(plan) {
     if (plan !== undefined) currentPlan = plan;
     const c = CONTAINERS[selectedContainer];
+    doorsClosed = false; // plan mới → cửa mở lại
+    clearForklift();      // dừng mô phỏng xe nâng cũ
+    clearLashing();       // xóa dây néo cũ
     buildContainer(c.length, c.width, c.height);
     renderCargo(currentPlan);
     updateStats(currentPlan);
@@ -684,6 +997,505 @@ function fitCameraToContainer(c) {
     const maxDim = Math.max(c.length, c.width, c.height);
     zoom = maxDim / 1200;
     panX = 0; panY = 0;
+}
+
+// ==================== XẾP CUỘN BĂNG TẢI (hình trụ NẰM NGANG) ====================
+let ROLL_D = 100, ROLL_W = 120; // đường kính cuộn, bề rộng cuộn (chiều dài trục)
+
+// Thân cuộn: cao su ĐEN trơn (hơi bóng)
+function _rollSideTex() {
+    const cv = document.createElement('canvas'); cv.width = 128; cv.height = 64;
+    const c = cv.getContext('2d');
+    const g = c.createLinearGradient(0, 0, 0, 64);
+    g.addColorStop(0, '#0a0a0a'); g.addColorStop(0.5, '#000000'); g.addColorStop(1, '#0a0a0a');
+    c.fillStyle = g; c.fillRect(0, 0, 128, 64);
+    const t = new THREE.CanvasTexture(cv); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(6, 1);
+    return t;
+}
+// Mặt đầu cuộn: ĐEN, vân lớp xoắn mờ (xám tối) + lỗ tâm
+function _rollCapTex() {
+    const s = 128; const cv = document.createElement('canvas'); cv.width = cv.height = s;
+    const c = cv.getContext('2d');
+    c.fillStyle = '#030303'; c.beginPath(); c.arc(s/2, s/2, s/2, 0, Math.PI*2); c.fill();
+    c.strokeStyle = 'rgba(90,90,95,0.22)'; c.lineWidth = 1;   // vân lớp xoắn rất mờ
+    for (let r = 5; r < s/2; r += 3) { c.beginPath(); c.arc(s/2, s/2, r, 0, Math.PI*2); c.stroke(); }
+    c.fillStyle = '#000000'; c.beginPath(); c.arc(s/2, s/2, 9, 0, Math.PI*2); c.fill(); // lỗ tâm
+    return new THREE.CanvasTexture(cv);
+}
+
+function loadRolls() {
+    const c = CONTAINERS[selectedContainer];
+    if (!c) { alert('Chưa chọn container!'); return; }
+    const D = ROLL_D, W = ROLL_W, r = D / 2;
+
+    // Cuộn NẰM, trục dọc theo chiều dài (X): X=bề rộng cuộn, Z=đường kính, Y=đường kính
+    const nx = Math.floor(c.length / W);   // số cuộn nối tiếp theo chiều dài
+    const nz = Math.floor(c.width  / D);   // số cuộn cạnh nhau theo chiều rộng
+    const ny = Math.floor(c.height / D);   // số tầng chồng lên
+    if (nx < 1 || nz < 1 || ny < 1) { alert('Cuộn lớn hơn container!'); return; }
+
+    const startX = -c.length / 2 + W / 2 + 2;                       // dồn sát trước
+    const startZ = -c.width  / 2 + (c.width - nz * D) / 2 + D / 2;  // căn giữa trái/phải
+
+    doorsClosed = false;
+    currentPlan = null;
+    buildContainer(c.length, c.width, c.height);
+    if (cargoGroup) { scene.remove(cargoGroup); }
+    cargoGroup = new THREE.Group();
+
+    const sideMat = new THREE.MeshStandardMaterial({ map: _rollSideTex(), roughness: 0.55, metalness: 0.15 });
+    const capMat  = new THREE.MeshStandardMaterial({ map: _rollCapTex(),  roughness: 0.75, metalness: 0.1 });
+    const mats = [sideMat, capMat, capMat]; // trụ: [thân, 2 mặt đầu]
+    const geo  = new THREE.CylinderGeometry(r, r, W - 1, 32);
+
+    let count = 0;
+    for (let iy = 0; iy < ny; iy++) {
+        const y = iy * D + D / 2;          // tâm cuộn theo chiều cao (nằm trên sàn / cuộn dưới)
+        for (let ix = 0; ix < nx; ix++) {
+            for (let iz = 0; iz < nz; iz++) {
+                const m = new THREE.Mesh(geo, mats);
+                m.position.set(startX + ix * W, y, startZ + iz * D);
+                m.rotation.z = Math.PI / 2;  // trục trụ nằm ngang theo X
+                m.castShadow = true; m.receiveShadow = true;
+                cargoGroup.add(m);
+                count++;
+            }
+        }
+    }
+    cargoGroup.position.set(0, 0, 0);
+    scene.add(cargoGroup);
+    fitCameraToContainer(c);
+    showToast(`🛢️ Đã xếp ${count} cuộn nằm (${nx}×${nz} × ${ny} tầng) · ĐK ${D} rộng ${W} cm`, true);
+}
+
+// Nút "Xếp cuộn" (inject vào viewer)
+(function() {
+    const host = document.querySelector('.viewer-container');
+    if (!host) return;
+    const b = document.createElement('button');
+    b.id = 'roll-btn';
+    b.title = 'Xếp cuộn (hình trụ đứng) vào container';
+    b.innerHTML = '🛢️';
+    b.style.cssText = `position:absolute;bottom:70px;right:16px;width:46px;height:46px;
+        background:rgba(15,17,23,0.85);border:1.5px solid #4a5568;border-radius:10px;
+        color:#e2e8f0;cursor:pointer;font-size:22px;z-index:45;backdrop-filter:blur(8px);
+        display:flex;align-items:center;justify-content:center;box-shadow:0 4px 16px rgba(0,0,0,0.5);`;
+    b.onclick = loadRolls;
+    host.appendChild(b);
+})();
+
+// ==================== DÂY NÉO CHÉO (lashing) ở đầu hở ====================
+let lashingGroup = null;
+let lashDoorGroup = null;  // nhóm dây néo PHÍA CỬA (nơi xe nâng vào) — ẩn khi mô phỏng
+const LASH_GAP = 6; // cm: dây cách mặt hàng
+
+function clearLashing() {
+    if (lashingGroup) { scene.remove(lashingGroup); lashingGroup = null; }
+    lashDoorGroup = null;
+}
+
+function _strap(a, b, mat) { // thanh dây nối 2 điểm a→b
+    const dir = new THREE.Vector3().subVectors(b, a);
+    const len = dir.length();
+    const m = new THREE.Mesh(new THREE.BoxGeometry(len, 3, 7), mat);
+    m.position.copy(a).add(b).multiplyScalar(0.5);
+    m.quaternion.setFromUnitVectors(new THREE.Vector3(1, 0, 0), dir.clone().normalize());
+    m.castShadow = true;
+    return m;
+}
+
+function addLashing() {
+    if (!cargoGroup || !currentPlan || !(currentPlan.packedItems || []).length) {
+        alert('Chưa có hàng để néo!'); return;
+    }
+    clearLashing();
+    const C = currentPlan.container;
+    const bbox = new THREE.Box3().setFromObject(cargoGroup);
+    if (!isFinite(bbox.min.x)) return;
+
+    lashingGroup = new THREE.Group();
+    const strapMat = new THREE.MeshStandardMaterial({ color: 0xff7a1a, roughness: 0.7, metalness: 0.1 });
+    const ringMat  = new THREE.MeshStandardMaterial({ color: 0xc2cad2, roughness: 0.4, metalness: 0.85 });
+
+    const wallZ = C.width / 2 - 4;          // điểm neo sát vách container
+    const yBot  = 8;                        // gần sàn
+    const yTop  = Math.max(bbox.max.y - 6, yBot + 30); // gần đỉnh khối hàng
+
+    // 2 nhóm riêng: đầu CỬA (xe nâng vào) và đầu TRƯỚC
+    lashDoorGroup = new THREE.Group();
+    const frontG = new THREE.Group();
+    lashingGroup.add(lashDoorGroup); lashingGroup.add(frontG);
+
+    // Néo chữ X tại 1 mặt phẳng X (đầu hở)
+    function lashFace(xPlane, g) {
+        const bl = new THREE.Vector3(xPlane, yBot, -wallZ);
+        const tr = new THREE.Vector3(xPlane, yTop,  wallZ);
+        const tl = new THREE.Vector3(xPlane, yTop, -wallZ);
+        const br = new THREE.Vector3(xPlane, yBot,  wallZ);
+        g.add(_strap(bl, tr, strapMat)); // chéo /
+        g.add(_strap(tl, br, strapMat)); // chéo \
+        [bl, tr, tl, br].forEach(p => {
+            const ring = new THREE.Mesh(new THREE.TorusGeometry(5, 1.6, 8, 16), ringMat);
+            ring.position.copy(p); ring.rotation.y = Math.PI / 2;
+            g.add(ring);
+        });
+    }
+
+    lashFace(bbox.max.x + LASH_GAP, lashDoorGroup);  // đầu phía CỬA (xe vào)
+    lashFace(bbox.min.x - LASH_GAP, frontG);         // đầu phía TRƯỚC
+
+    // ── Nhãn + vạch đo khoảng cách từ hàng tới 2 đầu container ──
+    const dimMat = new THREE.MeshStandardMaterial({ color: 0xffd24a, roughness: 0.5, emissive: 0x6b5300, emissiveIntensity: 0.4 });
+    const yMid = Math.min(yTop * 0.55, 90);
+    function dimAt(x0, x1, g) {
+        const dist = Math.round(Math.abs(x1 - x0));
+        const a = new THREE.Vector3(x0, 6, 0), b = new THREE.Vector3(x1, 6, 0);
+        g.add(_strap(a, b, dimMat));
+        g.add(_label(`${dist} cm`, new THREE.Vector3((x0 + x1) / 2, yMid, 0)));
+    }
+    dimAt(bbox.max.x,  C.length / 2, lashDoorGroup);  // hàng → đầu cửa
+    dimAt(bbox.min.x, -C.length / 2, frontG);         // hàng → đầu trước
+    scene.add(lashingGroup);
+
+    const gapDoor = Math.round(C.length / 2 - bbox.max.x);
+    showToast(`🪢 Đã néo 2 dây chéo · khoảng cách tới đầu container hiển thị bằng nhãn (đầu cửa ~${gapDoor}cm)`, true);
+}
+
+// Nhãn chữ nổi trong 3D (sprite luôn quay về camera)
+function _label(text, pos) {
+    const cv = document.createElement('canvas'); cv.width = 256; cv.height = 72;
+    const c = cv.getContext('2d');
+    c.fillStyle = 'rgba(15,17,23,0.9)';
+    c.strokeStyle = '#ffd24a'; c.lineWidth = 3;
+    const r = 12, w = 256, h = 72;
+    c.beginPath();
+    c.moveTo(r, 2); c.arcTo(w-2, 2, w-2, h-2, r); c.arcTo(w-2, h-2, 2, h-2, r);
+    c.arcTo(2, h-2, 2, 2, r); c.arcTo(2, 2, w-2, 2, r); c.closePath();
+    c.fill(); c.stroke();
+    c.fillStyle = '#ffd24a'; c.font = 'bold 40px Arial,sans-serif';
+    c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillText(text, w/2, h/2);
+    const tex = new THREE.CanvasTexture(cv);
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
+    sp.position.copy(pos); sp.scale.set(120, 34, 1);
+    return sp;
+}
+
+// Nút "Dây néo" (inject vào viewer)
+(function() {
+    const host = document.querySelector('.viewer-container');
+    if (!host) return;
+    const b = document.createElement('button');
+    b.id = 'lashing-btn';
+    b.title = 'Néo 2 dây chéo giữ hàng ở đầu hở';
+    b.innerHTML = '🪢';
+    b.style.cssText = `position:absolute;bottom:124px;right:16px;width:46px;height:46px;
+        background:rgba(15,17,23,0.85);border:1.5px solid #4a5568;border-radius:10px;
+        color:#e2e8f0;cursor:pointer;font-size:22px;z-index:45;backdrop-filter:blur(8px);
+        display:flex;align-items:center;justify-content:center;box-shadow:0 4px 16px rgba(0,0,0,0.5);`;
+    b.onclick = addLashing;
+    host.appendChild(b);
+})();
+
+// ==================== MÔ PHỎNG XE NÂNG ====================
+function buildForklift() {
+    if (forkliftGroup) { scene.remove(forkliftGroup); forkliftGroup = null; }
+    forkliftGroup = new THREE.Group();
+    const yellow = new THREE.MeshStandardMaterial({ color: 0xf2b200, roughness: 0.45, metalness: 0.45 });
+    const yelDk  = new THREE.MeshStandardMaterial({ color: 0xcf9700, roughness: 0.5,  metalness: 0.4  });
+    const dark   = new THREE.MeshStandardMaterial({ color: 0x26262b, roughness: 0.55, metalness: 0.6  });
+    const steel  = new THREE.MeshStandardMaterial({ color: 0x6b7079, roughness: 0.4,  metalness: 0.8  });
+    const tire   = new THREE.MeshStandardMaterial({ color: 0x111114, roughness: 0.95 });
+    const rim    = new THREE.MeshStandardMaterial({ color: 0xb8bdc4, roughness: 0.4,  metalness: 0.85 });
+    const fork   = new THREE.MeshStandardMaterial({ color: 0xc2c8d0, roughness: 0.35, metalness: 0.85 });
+    const glass  = new THREE.MeshStandardMaterial({ color: 0x223 , roughness: 0.1, metalness: 0.5, transparent: true, opacity: 0.5 });
+    const beacon = new THREE.MeshStandardMaterial({ color: 0xff8c1a, emissive: 0xff6a00, emissiveIntensity: 0.8, roughness: 0.4 });
+    const lightM = new THREE.MeshStandardMaterial({ color: 0xfff3c0, emissive: 0xffd24a, emissiveIntensity: 0.6 });
+
+    const add = (mat, w, h, d, x, y, z) => {
+        const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+        m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true;
+        forkliftGroup.add(m); return m;
+    };
+    const cyl = (mat, r, h, x, y, z, axis) => {
+        const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 18), mat);
+        if (axis === 'z') m.rotation.x = Math.PI / 2;
+        if (axis === 'x') m.rotation.z = Math.PI / 2;
+        m.position.set(x, y, z); m.castShadow = true;
+        forkliftGroup.add(m); return m;
+    };
+
+    // ── Bánh xe (lốp + vành) — trục theo Z ──
+    const wheel = (x, z, R) => {
+        cyl(tire, R, 18, x, R, z, 'z');
+        cyl(rim,  R * 0.5, 19, x, R, z, 'z');
+    };
+    wheel(-28, -44, 26); wheel(-28, 44, 26);   // bánh lái trước (to)
+    wheel(72, -42, 22);  wheel(72, 42, 22);    // bánh sau
+
+    // ── Thân + gầm ──
+    add(dark,   130, 16, 92, 22, 16, 0);       // gầm
+    add(yellow, 118, 44, 88, 24, 50, 0);       // thân chính
+    add(yelDk,  120, 10, 90, 24, 73, 0);       // gờ trên thân
+    // Đối trọng sau (bo)
+    add(dark,   30, 60, 88, 82, 50, 0);
+    add(yelDk,  10, 60, 88, 66, 50, 0);
+
+    // ── Khoang lái: mui, ghế, vô lăng ──
+    add(yelDk, 46, 14, 74, 34, 86, 0);                 // sàn ca-bin
+    add(dark,  34, 14, 48, 52, 96, 0);                 // đệm ghế
+    add(dark,  10, 36, 48, 70, 114, 0);                // tựa ghế
+    cyl(steel, 3, 34, 30, 104, 0, 'x');                // trục vô lăng (nghiêng) — gần
+    const sw = new THREE.Mesh(new THREE.TorusGeometry(11, 2.4, 8, 20), dark);
+    sw.position.set(16, 120, 0); sw.rotation.y = Math.PI / 2; forkliftGroup.add(sw); // vô lăng
+
+    // ── Khung bảo vệ (ROPS) ──
+    [[-6,-40],[-6,40],[74,-40],[74,40]].forEach(([x,z]) => add(steel, 7, 150, 7, x, 162, z));
+    add(steel, 96, 7, 94, 34, 238, 0);                 // mui che trên
+    // vài thanh ngang lưới mui
+    [-30, 0, 30].forEach(z => add(steel, 96, 4, 4, 34, 238, z));
+    // Đèn xoay cảnh báo
+    cyl(beacon, 7, 12, 34, 248, 0);
+
+    // ── Đèn pha trước + ống xả ──
+    [-30, 30].forEach(z => add(lightM, 6, 12, 14, -36, 40, z));
+    cyl(steel, 4, 36, 70, 96, 30, 0);                  // ống xả đứng
+
+    // ── Cột nâng (mast): 2 ray + thanh ngang + xi-lanh thủy lực ──
+    add(steel, 12, 230, 12, -36, 118, -30);
+    add(steel, 12, 230, 12, -36, 118,  30);
+    [40, 120, 200].forEach(y => add(steel, 12, 8, 64, -36, y, 0)); // thanh ngang
+    cyl(steel, 5, 220, -36, 115, 0);                   // xi-lanh giữa
+
+    // ── Càng nâng (carriage) — di chuyển theo Y ──
+    forkCarriage = new THREE.Group();
+    const plate = new THREE.Mesh(new THREE.BoxGeometry(10, 56, 72), dark);
+    plate.position.set(-42, 6, 0); forkCarriage.add(plate);
+    // Lưới chắn sau càng (load backrest) — chống hàng đổ về sau
+    const br = new THREE.Mesh(new THREE.BoxGeometry(6, 60, 76), dark);
+    br.position.set(-40, 42, 0); forkCarriage.add(br);
+    for (let z = -30; z <= 30; z += 15) {
+        const bar = new THREE.Mesh(new THREE.BoxGeometry(5, 60, 5), steel);
+        bar.position.set(-37, 42, z); forkCarriage.add(bar);
+    }
+    [22, 58].forEach(y => { const h = new THREE.Mesh(new THREE.BoxGeometry(5, 5, 76), steel); h.position.set(-37, y, 0); forkCarriage.add(h); });
+    [-20, 20].forEach(z => {
+        // càng hình L: phần đứng + phần nằm (càng dài để đỡ pallet)
+        const up = new THREE.Mesh(new THREE.BoxGeometry(8, 40, 14), fork);
+        up.position.set(-42, -8, z); forkCarriage.add(up);
+        const fl = new THREE.Mesh(new THREE.BoxGeometry(290, 8, 14), fork);
+        fl.position.set(-187, -19, z); fl.castShadow = true; forkCarriage.add(fl);
+    });
+    forkCarriage.position.y = 24;
+    forkliftGroup.add(forkCarriage);
+
+    // Thu hẹp bề ngang để xe lọt trong 1 làn pallet (không đè sang pallet bên cạnh)
+    forkliftGroup.scale.set(1, 1, 0.6);
+
+    // ── Chắn bùn bánh trước ──
+    [-44, 44].forEach(z => add(yelDk, 64, 6, 32, -26, 50, z));
+
+    // ── Xi-lanh nghiêng (mast → thân) ──
+    [-24, 24].forEach(z => {
+        const c = new THREE.Mesh(new THREE.CylinderGeometry(3.5, 3.5, 46, 10), steel);
+        c.position.set(-16, 44, z); c.rotation.z = Math.PI / 2.5; c.castShadow = true;
+        forkliftGroup.add(c);
+    });
+
+    // ── Gương chiếu hậu ──
+    add(dark, 4, 12, 4, 70, 150, -44);
+    add(steel, 10, 8, 3, 64, 157, -47);
+
+    // ── Người lái: thân + đầu + mũ bảo hộ + tay ──
+    const skin  = new THREE.MeshStandardMaterial({ color: 0xe0b48c, roughness: 0.7 });
+    const shirt = new THREE.MeshStandardMaterial({ color: 0x2f7fc4, roughness: 0.75 });
+    const helmet= new THREE.MeshStandardMaterial({ color: 0xffd400, roughness: 0.45 });
+    add(shirt, 22, 32, 36, 50, 112, 0);                 // thân
+    const head = new THREE.Mesh(new THREE.SphereGeometry(9, 16, 16), skin);
+    head.position.set(47, 136, 0); head.castShadow = true; forkliftGroup.add(head);
+    const cap = new THREE.Mesh(new THREE.SphereGeometry(10.5, 16, 10, 0, Math.PI*2, 0, Math.PI/2), helmet);
+    cap.position.set(47, 137, 0); forkliftGroup.add(cap);
+    // 2 cánh tay với tới vô lăng
+    [-12, 12].forEach(z => {
+        const arm = new THREE.Mesh(new THREE.CylinderGeometry(3.5, 3.5, 30, 8), shirt);
+        arm.position.set(33, 116, z); arm.rotation.z = Math.PI / 3; forkliftGroup.add(arm);
+    });
+
+    forkliftGroup.visible = false;
+    scene.add(forkliftGroup);
+}
+
+function clearForklift() {
+    if (forkliftGroup) { scene.remove(forkliftGroup); forkliftGroup = null; }
+    forkCarriage = null; forkliftAnim = null;
+}
+
+function playForkliftSim() {
+    if (!cargoGroup || !currentPlan || !(currentPlan.packedItems||[]).length) {
+        alert('Chưa có pallet! Hãy "Tính theo số lượng" hoặc "Tự động tối ưu" trước.'); return;
+    }
+    buildForklift();
+    const pool = cargoGroup.children.filter(m => m.userData.pi && !m.userData.pi.item?.isWood);
+    if (!pool.length) { alert('Không có pallet để mô phỏng!'); return; }
+
+    const dX = m => { const p = m.userData.pi; return (p.rotationY===90||p.rotationY===270)?p.item.width:p.item.length; };
+    const wZ = m => { const p = m.userData.pi; return (p.rotationY===90||p.rotationY===270)?p.item.length:p.item.width; };
+    // Các pallet ĐỠ ngay bên dưới m (mặt trên trùng đáy m, có chồng X/Z)
+    const supportsOf = m => {
+        const P = m.userData.pi;
+        if (P.y <= 1) return [];
+        return pool.filter(q => {
+            if (q === m) return false;
+            const Q = q.userData.pi;
+            if (Math.abs((Q.y + Q.item.height) - P.y) > 2) return false;
+            const ox = Math.min(P.x + dX(m), Q.x + dX(q)) - Math.max(P.x, Q.x);
+            const oz = Math.min(P.z + wZ(m), Q.z + wZ(q)) - Math.max(P.z, Q.z);
+            return ox > 1 && oz > 1;
+        });
+    };
+    const supMap = new Map(pool.map(m => [m, supportsOf(m)]));
+
+    // Sắp xếp tôn trọng PHỤ THUỘC: chỉ xếp khi mọi pallet đỡ bên dưới đã xếp.
+    // Trong các pallet sẵn sàng → ưu tiên SÂU nhất (x) → TẦNG DƯỚI (y) → sang ngang (z)
+    const placed = new Set();
+    const meshes = [];
+    while (meshes.length < pool.length) {
+        const ready = pool.filter(m => !placed.has(m) && supMap.get(m).every(s => placed.has(s)));
+        if (!ready.length) { pool.filter(m => !placed.has(m)).forEach(m => { meshes.push(m); placed.add(m); }); break; }
+        ready.sort((a, b) => {
+            const A = a.userData.pi, B = b.userData.pi;
+            return (A.x - B.x) || (A.y - B.y) || (A.z - B.z);
+        });
+        meshes.push(ready[0]); placed.add(ready[0]);
+    }
+
+    const C = currentPlan.container;
+    const doorStartX = C.length / 2 + 260;
+    const gx = cargoGroup.position.x, gy = cargoGroup.position.y, gz = cargoGroup.position.z;
+    const items = meshes.map(m => {
+        const finalLocal = m.position.clone();
+        const tw = new THREE.Vector3(finalLocal.x + gx, finalLocal.y + gy, finalLocal.z + gz); // world tâm pallet
+        const pi = m.userData.pi;
+        const palletH = pi.item.height;
+        const depthX = (pi.rotationY === 90 || pi.rotationY === 270) ? pi.item.width : pi.item.length; // độ dài pallet theo trục X
+        const widthZ = (pi.rotationY === 90 || pi.rotationY === 270) ? pi.item.length : pi.item.width;
+        const upper = pi.y > 1; // pallet tầng trên
+        m.visible = false;
+        return { mesh: m, finalLocal, tw, palletH, depthX, widthZ, upper, needPush: false };
+    });
+
+    // Xác định pallet nào khi đặt sẽ bị THÂN XE chạm pallet đã xếp → mới cần pha "lùi + đẩy"
+    for (let i = 0; i < items.length; i++) {
+        const it = items[i];
+        if (!it.upper) continue;
+        const ffx = it.tw.x + (315 - it.depthX / 2);   // vị trí xe khi đặt bình thường
+        const bxMin = ffx - 42, bxMax = ffx + 100;     // vùng thân/cột xe (đặc)
+        const bzMin = it.tw.z - 30, bzMax = it.tw.z + 30;
+        it.needPush = items.slice(0, i).some(p => {
+            const pxMin = p.tw.x - p.depthX / 2, pxMax = p.tw.x + p.depthX / 2;
+            const pzMin = p.tw.z - p.widthZ / 2, pzMax = p.tw.z + p.widthZ / 2;
+            return pxMin < bxMax && pxMax > bxMin && pzMin < bzMax && pzMax > bzMin;
+        });
+    }
+    doorsClosed = false; applyDoorState();
+    if (lashDoorGroup) lashDoorGroup.visible = false; // chỉ ẩn dây néo PHÍA CỬA (xe vào)
+    forkliftGroup.visible = true;
+    forkliftAnim = { items, i: 0, phase: 'in', t0: performance.now(), doorStartX, gx, gy, gz };
+}
+
+function updateForklift(now) {
+    const A = forkliftAnim;
+    if (!A || !forkliftGroup) return;
+    if (lashDoorGroup) lashDoorGroup.visible = false; // ép ẩn dây néo phía cửa suốt lúc xếp
+    if (A.i >= A.items.length) {
+        forkliftGroup.visible = false; forkliftAnim = null;
+        if (lashDoorGroup) lashDoorGroup.visible = true; // xếp xong → hiện lại dây néo phía cửa
+        showToast('✅ Xe nâng đã xếp xong — đã néo lại dây phía cửa', true);
+        if (typeof window._onForkliftDone === 'function') { const cb = window._onForkliftDone; window._onForkliftDone = null; cb(); }
+        return;
+    }
+    const it = A.items[A.i];
+    // Pallet luôn nằm ở ĐẦU NGỌN CÀNG: mép sâu của pallet bám đầu càng (≈ -315),
+    // nên dù pallet to/nhỏ hay xoay ngang, thân xe vẫn đứng hẳn phía cửa (vùng trống)
+    // → càng vươn vào đặt, KHÔNG cần chạy sâu, không xuyên pallet đã đặt.
+    const carryX = -(315 - it.depthX / 2);
+    const finalForkliftX = it.tw.x - carryX;            // xe khi pallet ở VỊ TRÍ CUỐI
+    const carriageY = it.tw.y - it.palletH / 2 + 14.5;  // nâng càng tới tầng pallet
+    forkliftGroup.position.z = it.tw.z;
+
+    const PUSH = 75, BACK = 45;                          // đẩy vào / lùi ra cho tầng trên
+    const dropForkliftX = finalForkliftX + PUSH;        // xe khi pallet đặt HỜ (lệch ra cửa)
+    const dropWorldX = it.tw.x + PUSH;
+
+    const setCarry = () => { // pallet bám càng theo vị trí xe
+        const cw = new THREE.Vector3(forkliftGroup.position.x + carryX,
+                                     forkCarriage.position.y - 14.5 + it.palletH / 2,
+                                     forkliftGroup.position.z);
+        it.mesh.visible = true;
+        it.mesh.position.set(cw.x - A.gx, cw.y - A.gy, cw.z - A.gz);
+    };
+    const setMeshX = (worldX) => {
+        it.mesh.visible = true;
+        it.mesh.position.set(worldX - A.gx, it.finalLocal.y, it.finalLocal.z);
+    };
+
+    const DUR = { in: 800, place: 250, back: 350, push: 450, out: 600 };
+    const t = now - A.t0;
+
+    // ===== ĐẶT BÌNH THƯỜNG (không vướng): vào → đặt → ra =====
+    if (!it.needPush) {
+        if (A.phase === 'in') {
+            forkCarriage.position.y = carriageY;
+            const p = Math.min(1, t / DUR.in), e = 1 - Math.pow(1 - p, 2);
+            forkliftGroup.position.x = A.doorStartX + (finalForkliftX - A.doorStartX) * e;
+            setCarry();
+            if (p >= 1) { A.phase = 'place'; A.t0 = now; }
+        } else if (A.phase === 'place') {
+            if (t >= DUR.place) { it.mesh.position.copy(it.finalLocal); it.mesh.visible = true; A.phase = 'out'; A.t0 = now; }
+        } else if (A.phase === 'out') {
+            const p = Math.min(1, t / DUR.out);
+            forkCarriage.position.y = 24 + (carriageY - 24) * (1 - p);
+            forkliftGroup.position.x = finalForkliftX + (A.doorStartX - finalForkliftX) * p;
+            if (p >= 1) { A.i++; A.phase = 'in'; A.t0 = now; }
+        }
+        return;
+    }
+
+    // ===== BỊ VƯỚNG: vào (đặt hờ lệch ra cửa) → lùi → đẩy càng vào cho sát → ra =====
+    if (A.phase === 'in') {
+        forkCarriage.position.y = carriageY;
+        const p = Math.min(1, t / DUR.in), e = 1 - Math.pow(1 - p, 2);
+        forkliftGroup.position.x = A.doorStartX + (dropForkliftX - A.doorStartX) * e;
+        setCarry(); // pallet tới vị trí HỜ (tw.x + PUSH)
+        if (p >= 1) { A.phase = 'drop'; A.t0 = now; }
+    } else if (A.phase === 'drop') {
+        // hạ càng nhẹ để pallet tựa lên pallet dưới
+        forkCarriage.position.y = carriageY - 4;
+        setMeshX(dropWorldX);
+        if (t >= DUR.place) { A.phase = 'back'; A.t0 = now; }
+    } else if (A.phase === 'back') {
+        // lùi xe ra để rút càng, pallet nằm yên ở vị trí hờ
+        const p = Math.min(1, t / DUR.back);
+        forkliftGroup.position.x = dropForkliftX + BACK * p;
+        forkCarriage.position.y = carriageY - 4;
+        setMeshX(dropWorldX);
+        if (p >= 1) { A.phase = 'push'; A.t0 = now; }
+    } else if (A.phase === 'push') {
+        // tiến lại, đầu càng đẩy pallet từ vị trí hờ vào vị trí cuối cho sát
+        const p = Math.min(1, t / DUR.push);
+        const fx = (dropForkliftX + BACK) + (finalForkliftX - (dropForkliftX + BACK)) * p;
+        forkliftGroup.position.x = fx;
+        forkCarriage.position.y = carriageY - 4;
+        // pallet chỉ bị đẩy khi đầu càng chạm mặt sau (sau khi đã đóng khe BACK)
+        const pushedWorldX = dropWorldX - Math.max(0, (dropForkliftX - fx));
+        setMeshX(pushedWorldX);
+        if (p >= 1) { it.mesh.position.copy(it.finalLocal); A.phase = 'out'; A.t0 = now; }
+    } else if (A.phase === 'out') {
+        const p = Math.min(1, t / DUR.out);
+        forkCarriage.position.y = 24 + ((carriageY - 4) - 24) * (1 - p);
+        forkliftGroup.position.x = finalForkliftX + (A.doorStartX - finalForkliftX) * p;
+        if (p >= 1) { A.i++; A.phase = 'in'; A.t0 = now; }
+    }
 }
 
 function updateStats(plan) {
@@ -876,6 +1688,7 @@ function resetCamera() {
 
 function setView(view) {
     document.querySelectorAll('.view-btn').forEach(b => {
+        if (b.id === 'btn-rotate') return; // nút Auto Rotate có trạng thái riêng
         b.classList.toggle('active', (b.getAttribute('onclick') || '').includes(`'${view}'`));
     });
     const c = CONTAINERS[selectedContainer];
@@ -934,9 +1747,119 @@ function handleCanvasClick(e) {
     const hits = raycaster.intersectObjects(cargoGroup.children, false);
     if (hits.length > 0) {
         const pi = findPiByMesh(hits[0].object);
-        if (pi) { selectPallet(hits[0].object, pi); return; }
+        if (pi && !pi.item?.isWood) { toggleLoaded(hits[0].object, pi); return; }
     }
-    deselectPallet();
+}
+
+// Kích thước theo hướng xoay
+function _depthOf(p) { return (p.rotationY === 90 || p.rotationY === 270) ? p.item.width  : p.item.length; }
+function _widthOf(p) { return (p.rotationY === 90 || p.rotationY === 270) ? p.item.length : p.item.width;  }
+
+// Có được phép lên pallet này chưa? (từ trong ra ngoài + tầng dưới trước)
+// Cửa ở +X → "trong" = X nhỏ. Pallet sâu hơn (X nhỏ hơn, cùng làn) và pallet đỡ bên dưới phải lên trước.
+function canLoad(pi) {
+    const T = 1;
+    for (const q of currentPlan.packedItems) {
+        if (q === pi || q.item?.isWood || q.loaded) continue;
+        const qd = _depthOf(q), qw = _widthOf(q);
+        const pd = _depthOf(pi), pw = _widthOf(pi);
+        // chồng theo Z (cùng làn trái/phải)
+        const zOv = q.z < pi.z + pw - T && q.z + qw > pi.z + T;
+        // chồng theo Y (cùng tầng cao)
+        const yOv = q.y < pi.y + pi.item.height - T && q.y + q.item.height > pi.y + T;
+        // q nằm SÂU hơn pi (phía trong) cùng làn & cùng tầng → phải lên trước
+        const deeper = (q.x + qd <= pi.x + T) && zOv && yOv;
+        // q đỡ ngay BÊN DƯỚI pi → phải lên trước (xếp tầng dưới trước)
+        const xOv = q.x < pi.x + pd - T && q.x + qd > pi.x + T;
+        const below = Math.abs(q.y + q.item.height - pi.y) < T && xOv && zOv;
+        if (deeper || below) return false;
+    }
+    return true;
+}
+
+// Tô màu pallet theo trạng thái đã lên (xanh) hay chưa
+function _paintLoaded(mesh, loaded) {
+    if (loaded) {
+        if (!mesh.userData.origMats) mesh.userData.origMats = mesh.material;
+        const mats = Array.isArray(mesh.userData.origMats) ? mesh.userData.origMats : [mesh.userData.origMats];
+        mesh.material = mats.map(m => { const c = m.clone(); c.color = new THREE.Color(0x3fbf57); return c; });
+    } else if (mesh.userData.origMats) {
+        mesh.material = mesh.userData.origMats;
+    }
+}
+
+// Lưu trạng thái 1 pallet lên server (chống rớt mạng)
+async function _persistPallet(mesh, pi) {
+    if (!window._execPlan) return;
+    try {
+        await fetch('/Plans/SetPalletLoaded', {
+            method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({ id: window._execPlan.planId, ci: window._execPlan.containerIdx, idx: mesh.userData.idx, loaded: pi.loaded })
+        });
+    } catch (e) { /* nếu rớt mạng, vẫn giữ trạng thái local; bấm lại sẽ lưu */ }
+}
+
+// Khôi phục các pallet đã lên (từ DB) khi mở lại container
+function applyLoadedFromServer(indices) {
+    if (!cargoGroup || !indices) return;
+    const set = new Set(indices);
+    cargoGroup.children.forEach(m => {
+        if (m.userData && m.userData.pi && set.has(m.userData.idx)) {
+            m.userData.pi.loaded = true;
+            _paintLoaded(m, true);
+        }
+    });
+    updateLoadedStatus();
+}
+
+// Bấm pallet → hỏi xác nhận → đánh dấu "đã lên container" (xanh) + LƯU DB. Đủ hết → đóng cửa.
+function toggleLoaded(mesh, pi) {
+    if (!pi.loaded) {
+        if (!canLoad(pi)) {
+            alert('⚠️ Phải xếp TỪ TRONG RA NGOÀI!\nHãy xếp pallet phía trong (sâu hơn) và tầng dưới trước rồi mới đến pallet này.');
+            return;
+        }
+        if (!confirm('Xác nhận pallet này ĐÃ LÊN container?')) return;
+        pi.loaded = true; _paintLoaded(mesh, true);
+    } else {
+        if (!confirm('Bỏ đánh dấu pallet này (chưa lên)?')) return;
+        pi.loaded = false; _paintLoaded(mesh, false);
+    }
+    _persistPallet(mesh, pi);   // lưu ngay vào DB
+    updateLoadedStatus();
+}
+
+function updateLoadedStatus() {
+    if (!currentPlan) return;
+    const pallets = currentPlan.packedItems.filter(p => !p.item?.isWood);
+    const total = pallets.length;
+    const done  = pallets.filter(p => p.loaded).length;
+    const allDone = total > 0 && done === total;
+    showToast(allDone ? `✅ Đã lên đủ ${done}/${total} pallet — đóng cửa container`
+                      : `📦 Đã lên ${done}/${total} pallet`, allDone);
+    if (allDone !== doorsClosed) { doorsClosed = allDone; applyDoorState(); }
+    // báo cho quy trình thực hiện: đủ pallet hay chưa
+    if (typeof window._onLoadedProgress === 'function') window._onLoadedProgress(done, total, allDone);
+}
+
+let _toastTimer = null;
+function showToast(msg, strong) {
+    let t = document.getElementById('load-toast');
+    if (!t) {
+        t = document.createElement('div');
+        t.id = 'load-toast';
+        t.style.cssText = `position:absolute;top:72px;left:50%;transform:translateX(-50%);
+            background:rgba(15,17,23,0.95);border:1px solid #38a169;padding:8px 18px;border-radius:20px;
+            font-size:13px;font-weight:700;z-index:50;pointer-events:none;box-shadow:0 4px 16px rgba(0,0,0,0.5);`;
+        const host = document.querySelector('.viewer-container');
+        if (host) host.appendChild(t);
+    }
+    t.textContent = msg;
+    t.style.color = strong ? '#9ae6b4' : '#cbd5e0';
+    t.style.borderColor = strong ? '#38a169' : '#4a5568';
+    t.style.display = 'block';
+    clearTimeout(_toastTimer);
+    _toastTimer = setTimeout(() => { t.style.display = 'none'; }, 2200);
 }
 
 // ==================== TAB SWITCHING ====================
@@ -984,6 +1907,7 @@ function resetAll() {
 
 function renderCargoList() {
     const el = document.getElementById('cargo-list');
+    if (!el) return; // tab "Thêm cargo" cũ đã đổi thành lịch sử
     if (!cargoItems.length) {
         el.innerHTML = `<div class="empty-state"><i class="fas fa-inbox"></i><p>No items yet.<br>Go to "Add Cargo" tab to add items.</p></div>`;
         return;
@@ -1002,7 +1926,7 @@ function renderCargoList() {
 }
 
 function updateItemCount() {
-    document.getElementById('item-count').textContent = cargoItems.reduce((s, i) => s + i.quantity, 0);
+    // Badge #item-count giờ hiển thị SỐ KẾ HOẠCH (do loadPlansPanel cập nhật), không đếm cargo nữa
 }
 
 // Color picker
@@ -1086,35 +2010,55 @@ async function exportPDF() {
 
     const C      = currentPlan.container;
     const cY     = C.height / 2;
-    const maxDim = Math.max(C.length, C.width, C.height);
-    const dist   = maxDim * 2.2;
+
+    // Chụp ở độ phân giải cao để chữ sắc nét
+    const CAP_W = 1800, CAP_H = 1100;
+    const oldSize = new THREE.Vector2(); renderer.getSize(oldSize);
+    const oldRatio = renderer.getPixelRatio();
+    const oldAspect = camera.aspect;
+    renderer.setPixelRatio(1);
+    renderer.setSize(CAP_W, CAP_H, false);
+    const aspect = CAP_W / CAP_H;
+    camera.aspect = aspect;
+
+    const fovV = camera.fov * Math.PI / 180;
+    // Khoảng cách để khít một mặt rộng w × cao h (chừa lề nhẹ)
+    const fitDist = (w, h, margin = 1.1) => {
+        const dV = (h / 2) / Math.tan(fovV / 2);
+        const dH = (w / 2) / (Math.tan(fovV / 2) * aspect);
+        return Math.max(dV, dH) * margin;
+    };
 
     const VIEWS = [
         {
             label: 'Góc nhìn 3D (Perspective)',
             setup() {
-                camera.position.set(C.length * 0.7, cY + C.height * 0.8, C.width * 1.4);
+                const d = fitDist(C.length, Math.max(C.height, C.width), 1.25);
+                camera.position.set(d * 0.62, cY + d * 0.5, C.width / 2 + d * 0.62);
                 camera.lookAt(0, cY, 0);
             }
         },
         {
             label: 'Nhìn từ trên (Top View)',
             setup() {
-                camera.position.set(0, cY + dist, 0.1);
+                const d = fitDist(C.length, C.width);
+                camera.position.set(0, cY + d, 0.1);
                 camera.lookAt(0, cY, 0);
             }
         },
         {
             label: 'Mặt trước – Đầu container (Front)',
             setup() {
-                camera.position.set(-C.length / 2 - dist * 0.7, cY, 0);
+                const d = fitDist(C.width, C.height);
+                camera.position.set(-C.length / 2 - d, cY, 0);
                 camera.lookAt(0, cY, 0);
             }
         },
         {
             label: 'Mặt bên (Side View)',
             setup() {
-                camera.position.set(0, cY, C.width / 2 + dist * 0.7);
+                const d = fitDist(C.length, C.height);
+                camera.position.set(0, cY, C.width / 2 + d);
                 camera.lookAt(0, cY, 0);
             }
         },
@@ -1123,13 +2067,21 @@ async function exportPDF() {
     const images = [];
     for (const v of VIEWS) {
         v.setup();
-        camera.aspect = canvas.width / canvas.height;
         camera.updateProjectionMatrix();
+        // Ẩn tường phía gần camera để luôn thấy pallet bên trong khi chụp
+        for (const w of cutawayWalls) {
+            _toCam.copy(camera.position).sub(w.center);
+            w.mesh.visible = _toCam.dot(w.normal) <= 0;
+        }
         renderer.render(scene, camera);
-        images.push({ label: v.label, src: renderer.domElement.toDataURL('image/jpeg', 0.92) });
+        images.push({ label: v.label, src: renderer.domElement.toDataURL('image/jpeg', 0.95) });
     }
 
-    // Khôi phục camera
+    // Khôi phục renderer + camera
+    renderer.setPixelRatio(oldRatio);
+    renderer.setSize(oldSize.x, oldSize.y, false);
+    camera.aspect = oldAspect;
+    camera.updateProjectionMatrix();
     currentView = 'perspective';
 
     // Bảng tổng hợp
@@ -1160,21 +2112,21 @@ async function exportPDF() {
 <style>
   @page { size: A4 landscape; margin: 8mm; }
   *  { box-sizing:border-box; margin:0; padding:0; }
-  body { font-family:Arial,sans-serif; font-size:11px; color:#222; background:#fff; }
-  header { display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:8px; border-bottom:2px solid #2c3e50; padding-bottom:6px; }
-  h1  { font-size:17px; color:#2c3e50; }
-  .meta { font-size:10px; color:#666; text-align:right; line-height:1.6; }
-  .summary { display:flex; gap:20px; margin-bottom:8px; font-size:11px; }
-  .summary span { background:#f0f4f8; border-left:3px solid #2c3e50; padding:3px 8px; border-radius:0 4px 4px 0; }
-  .views { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:10px; }
-  .view-box { border:1px solid #ccc; border-radius:5px; overflow:hidden; }
-  .view-label { background:#2c3e50; color:#fff; font-size:10px; font-weight:bold; padding:3px 8px; }
+  body { font-family:Arial,sans-serif; font-size:14px; color:#111; background:#fff; }
+  header { display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:10px; border-bottom:3px solid #2c3e50; padding-bottom:8px; }
+  h1  { font-size:22px; color:#1a2533; }
+  .meta { font-size:12px; color:#444; text-align:right; line-height:1.6; font-weight:600; }
+  .summary { display:flex; gap:16px; margin-bottom:10px; font-size:14px; flex-wrap:wrap; }
+  .summary span { background:#eef3f8; border-left:4px solid #2c3e50; padding:5px 12px; border-radius:0 4px 4px 0; font-weight:600; }
+  .views { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:12px; }
+  .view-box { border:1px solid #bbb; border-radius:5px; overflow:hidden; }
+  .view-label { background:#2c3e50; color:#fff; font-size:13px; font-weight:bold; padding:5px 10px; }
   .view-box img { width:100%; display:block; }
-  table { width:100%; border-collapse:collapse; font-size:10px; }
-  th { background:#2c3e50; color:#fff; padding:5px 8px; text-align:left; }
-  td { padding:4px 8px; border-bottom:1px solid #eee; }
-  tr:nth-child(even) td { background:#f8f9fa; }
-  tfoot td { font-weight:bold; border-top:2px solid #2c3e50; background:#f0f4f8 !important; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th { background:#2c3e50; color:#fff; padding:8px 10px; text-align:left; font-size:13px; }
+  td { padding:7px 10px; border-bottom:1px solid #ddd; }
+  tr:nth-child(even) td { background:#f5f8fa; }
+  tfoot td { font-weight:bold; font-size:14px; border-top:2px solid #2c3e50; background:#eef3f8 !important; }
   @media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }
 </style>
 </head>
@@ -1182,8 +2134,8 @@ async function exportPDF() {
 <header>
   <div>
     <h1>🚢 Loading Plan – EasyCargo 3D</h1>
-    <div style="font-size:10px;color:#666;margin-top:2px;">
-      Container: <b>${C.name || selectedContainer}</b> · ${C.length}×${C.width}×${C.height} cm
+    <div style="font-size:13px;color:#333;margin-top:3px;font-weight:600;">
+      Container: <b>${C.name || selectedContainer}</b> · ${C.length}×${C.width}×${C.height} cm · Tải trọng tối đa: <b>${(C.maxWeight||0).toLocaleString()} kg</b>
     </div>
   </div>
   <div class="meta">
@@ -1293,7 +2245,7 @@ function addImportRow(name, length, width, height, weight, qty, color) {
     width  = width  !== undefined && width  !== '' ? width  : (matched?.width  ?? '');
     height = height !== undefined && height !== '' ? height : (matched?.height ?? '');
     weight = weight !== undefined && weight !== '' ? weight : (matched?.weight ?? '');
-    qty    = qty    || 1;
+    qty    = (qty !== undefined && qty !== '' && qty !== null) ? qty : ''; // để trống, bắt người dùng nhập
     const id = 'irow-' + (importRowCount++);
     const c  = color || matched?.color || IMPORT_COLORS[(importRowCount - 1) % IMPORT_COLORS.length];
 
@@ -1391,7 +2343,7 @@ async function importMultiContainer() {
     const rows = document.querySelectorAll('.import-row');
     if (!rows.length) { alert('Vui lòng thêm ít nhất 1 loại pallet!'); return; }
 
-    const items = []; let colorIdx = 0;
+    const items = []; let colorIdx = 0; window._missingQty = false;
     rows.forEach(row => {
         const sel    = row.querySelector('.irow-select');
         const pts    = window._palletTypes || [];
@@ -1405,19 +2357,23 @@ async function importMultiContainer() {
         const width  = p ? p.width  : (parseFloat(row.querySelector('.irow-w')?.value) || 0);
         const height = p ? p.height : (parseFloat(row.querySelector('.irow-h')?.value) || 0);
         const weight = parseFloat(row.querySelector('.irow-wt')?.value) || (p?.weight ?? 0);
-        const qty    = parseInt(row.querySelector('.irow-qty')?.value)  || 1;
+        const qty    = parseInt(row.querySelector('.irow-qty')?.value);
         const color  = swatch?.style.background || p?.color || IMPORT_COLORS[colorIdx % IMPORT_COLORS.length];
         if (length > 0 && width > 0 && height > 0) {
+            if (!qty || qty < 1) { window._missingQty = true; colorIdx++; return; }
             items.push({ id: colorIdx + 1, name, length, width, height, weight, quantity: qty, color, stackable: true, description: '' });
         }
         colorIdx++;
     });
 
+    if (window._missingQty) { window._missingQty = false; alert('Vui lòng nhập SỐ LƯỢNG cho từng loại pallet!'); return; }
     if (!items.length) { alert('Vui lòng nhập kích thước hợp lệ!'); return; }
 
     const containerType  = document.getElementById('import-container-type').value;
-    const containerCount = parseInt(document.getElementById('import-container-count').value) || 8;
-    const maxWeight      = parseFloat(document.getElementById('import-max-weight').value)    || 19000;
+    if (!containerType || !CONTAINERS[containerType]) { alert('Vui lòng chọn loại container!'); return; }
+    const containerCount = parseInt(document.getElementById('import-container-count').value) || 50;
+    const maxWeight      = (window._ctypeWeights && parseFloat(window._ctypeWeights[containerType])) || 0;
+    if (!maxWeight || maxWeight <= 0) { alert('⚠️ Vui lòng nhập TẢI TRỌNG TỐI ĐA (kg) cho container!'); return; }
 
     // Kiểm tra pallet có vừa container không (xét cả khi xoay 90°)
     const c = CONTAINERS[containerType];
@@ -1504,7 +2460,7 @@ async function importAutoContainer() {
     const rows = document.querySelectorAll('.import-row');
     if (!rows.length) { alert('Vui lòng thêm ít nhất 1 loại pallet!'); return; }
 
-    const items = []; let colorIdx = 0;
+    const items = []; let colorIdx = 0; window._missingQty = false;
     rows.forEach(row => {
         const sel    = row.querySelector('.irow-select');
         const pts    = window._palletTypes || [];
@@ -1516,17 +2472,24 @@ async function importAutoContainer() {
         const width  = p ? p.width  : (parseFloat(row.querySelector('.irow-w')?.value) || 0);
         const height = p ? p.height : (parseFloat(row.querySelector('.irow-h')?.value) || 0);
         const weight = parseFloat(row.querySelector('.irow-wt')?.value) || (p?.weight ?? 0);
-        const qty    = parseInt(row.querySelector('.irow-qty')?.value)  || 1;
+        const qty    = parseInt(row.querySelector('.irow-qty')?.value);
         const color  = swatch?.style.background || p?.color || IMPORT_COLORS[colorIdx % IMPORT_COLORS.length];
-        if (length > 0 && width > 0 && height > 0)
+        if (length > 0 && width > 0 && height > 0) {
+            if (!qty || qty < 1) { window._missingQty = true; colorIdx++; return; }
             items.push({ id: colorIdx + 1, name, length, width, height, weight, quantity: qty, color, stackable: true, description: '' });
+        }
         colorIdx++;
     });
 
+    if (window._missingQty) { window._missingQty = false; alert('Vui lòng nhập SỐ LƯỢNG cho từng loại pallet!'); return; }
     if (!items.length) { alert('Vui lòng nhập kích thước hợp lệ!'); return; }
 
     const containerType = document.getElementById('import-container-type').value;
-    const maxWeight     = parseFloat(document.getElementById('import-max-weight').value) || 19000;
+    if (!containerType || !CONTAINERS[containerType]) { alert('Vui lòng chọn loại container!'); return; }
+    const containers = (typeof collectContainers === 'function') ? collectContainers() : [{ type: containerType, maxWeight: 0 }];
+    // BẮT BUỘC nhập tải trọng tối đa cho từng loại
+    const missingW = containers.filter(x => !x.maxWeight || x.maxWeight <= 0).map(x => CONTAINERS[x.type]?.name || x.type);
+    if (missingW.length) { alert('⚠️ Vui lòng nhập TẢI TRỌNG TỐI ĐA (kg) cho các loại container:\n• ' + missingW.join('\n• ')); return; }
     const c = CONTAINERS[containerType];
 
     if (c) {
@@ -1543,7 +2506,7 @@ async function importAutoContainer() {
 
     showLoading(true);
     try {
-        const res    = await fetch('/Home/PackAuto', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ containerType, containerCount: 0, maxWeightPerContainer: maxWeight, items }) });
+        const res    = await fetch('/Home/PackAuto', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ containerType, containers, containerCount: 0, items }) });
         const result = await res.json();
         multiPlans      = result.plans || [];
         multiCurrentIdx = 0;
@@ -1569,7 +2532,7 @@ async function importAutoContainer() {
                         Cần <b style="color:#a78bfa;font-size:14px;"> ${used} container</b> để chứa ${totalQty} pallet
                     </div>
                     <div><i class="fas fa-weight-hanging" style="color:#f6ad55;width:16px;"></i>
-                        Tải trọng tối đa: <b style="color:#f6ad55">${maxWeight.toLocaleString()} kg</b> / container
+                        Tải trọng tối đa: <b style="color:#f6ad55">${containers.map(x => (CONTAINERS[x.type]?.name || x.type) + ' ' + x.maxWeight.toLocaleString() + 'kg').join(' · ')}</b>
                     </div>
                     <div><i class="fas fa-check-circle" style="color:#68d391;width:16px;"></i>
                         Xếp được: <b style="color:#68d391">${packed}</b>/${total} pallet

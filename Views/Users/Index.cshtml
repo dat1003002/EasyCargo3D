@@ -1,0 +1,95 @@
+@model List<EasyCargo3D.Models.AppUser>
+@{
+    Layout = "_LayoutAdmin";
+    ViewData["Title"] = "Quản lý người dùng";
+    var workshops = (List<EasyCargo3D.Models.Workshop>)ViewBag.Workshops;
+}
+<div class="admin-page">
+    <div><h2>👤 Quản lý người dùng</h2><a href="/Workshops">→ Quản lý xưởng</a> · <a href="/">← Trang chính</a></div>
+    <br />
+    @if (TempData["Err"] != null) { <div class="err">@TempData["Err"]</div> }
+
+    <div class="card">
+        <b id="form-title">Thêm người dùng</b>
+        <form method="post" action="/Users/Save">
+            @Html.AntiForgeryToken()
+            <input type="hidden" name="id" id="u-id" value="0" />
+            <div class="row">
+                <div><label>Tài khoản</label><input name="username" id="u-username" required /></div>
+                <div><label>Họ tên</label><input name="fullName" id="u-fullname" /></div>
+                <div><label>Vai trò</label>
+                    <select name="role" id="u-role">
+                        @foreach (var r in EasyCargo3D.Models.Roles.All) { <option value="@r">@EasyCargo3D.Models.Roles.Label(r)</option> }
+                    </select>
+                </div>
+                <div><label>Mật khẩu <span style="color:#718096">(để trống nếu không đổi)</span></label><input name="password" id="u-password" type="text" /></div>
+                <div style="max-width:120px;"><label>Kích hoạt</label>
+                    <select name="isActive" id="u-active"><option value="true">Bật</option><option value="false">Khóa</option></select>
+                </div>
+            </div>
+            <label>Xưởng (chọn 1 hoặc nhiều)</label>
+            <div class="ws-box">
+                @foreach (var w in workshops)
+                {
+                    <label><input type="checkbox" name="workshopIds" value="@w.Id" class="ws-cb" /> @w.Name (@w.Code)</label>
+                }
+            </div>
+            <button class="btn b-add" type="submit" style="margin-top:12px;">💾 Lưu</button>
+            <button class="btn" type="button" style="background:#4a5568;margin-top:12px;" onclick="resetForm()">Làm mới</button>
+        </form>
+    </div>
+
+    <table>
+        <thead><tr><th>Tài khoản</th><th>Họ tên</th><th>Vai trò</th><th>Xưởng</th><th>TT</th><th style="width:150px;">Thao tác</th></tr></thead>
+        <tbody>
+        @foreach (var u in Model)
+        {
+            var wids = string.Join(",", u.UserWorkshops.Select(x => x.WorkshopId));
+            <tr>
+                <td><b>@u.Username</b></td>
+                <td>@u.FullName</td>
+                <td class="role">@EasyCargo3D.Models.Roles.Label(u.Role)</td>
+                <td>@foreach (var uw in u.UserWorkshops) { <span class="tag">@(uw.Workshop?.Name)</span> }</td>
+                <td>@(u.IsActive ? "✅" : Html.Raw("<span class='off'>🔒</span>"))</td>
+                <td>
+                    <button class="btn b-edit" onclick='editUser(@u.Id,@Html.Raw(System.Text.Json.JsonSerializer.Serialize(u.Username)),@Html.Raw(System.Text.Json.JsonSerializer.Serialize(u.FullName)),"@u.Role",@(u.IsActive ? "true" : "false"),"@wids")'>Sửa</button>
+                    @if (u.Username != "admin")
+                    {
+                        <form method="post" action="/Users/Delete" style="display:inline" onsubmit="return confirm('Xóa tài khoản @u.Username?')">
+                            @Html.AntiForgeryToken()<input type="hidden" name="id" value="@u.Id" />
+                            <button class="btn b-del" type="submit">Xóa</button>
+                        </form>
+                    }
+                </td>
+            </tr>
+        }
+        </tbody>
+    </table>
+</div>
+
+@section Scripts {
+<script>
+    function editUser(id, username, fullName, role, active, wids) {
+        document.getElementById('form-title').textContent = 'Sửa người dùng: ' + username;
+        document.getElementById('u-id').value = id;
+        document.getElementById('u-username').value = username;
+        document.getElementById('u-fullname').value = fullName || '';
+        document.getElementById('u-role').value = role;
+        document.getElementById('u-active').value = active;
+        document.getElementById('u-password').value = '';
+        const set = new Set((wids || '').split(',').filter(x => x));
+        document.querySelectorAll('.ws-cb').forEach(cb => cb.checked = set.has(cb.value));
+        window.scrollTo(0, 0);
+    }
+    function resetForm() {
+        document.getElementById('form-title').textContent = 'Thêm người dùng';
+        document.getElementById('u-id').value = 0;
+        document.getElementById('u-username').value = '';
+        document.getElementById('u-fullname').value = '';
+        document.getElementById('u-role').value = 'Viewer';
+        document.getElementById('u-active').value = 'true';
+        document.getElementById('u-password').value = '';
+        document.querySelectorAll('.ws-cb').forEach(cb => cb.checked = false);
+    }
+</script>
+}

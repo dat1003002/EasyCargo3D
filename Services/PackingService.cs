@@ -150,8 +150,41 @@ namespace EasyCargo3D.Services
         // Mục tiêu: tối đa hóa sử dụng không gian mỗi container trước khi qua cái tiếp theo
         public MultiContainerResult PackAuto(MultiContainerRequest request)
         {
-            var container = ContainerTypes.GetValueOrDefault(request.ContainerType, ContainerTypes["40hc"]);
-            double maxWeight = request.MaxWeightPerContainer > 0 ? request.MaxWeightPerContainer : container.MaxWeight;
+            // Danh sách loại theo THỨ TỰ ƯU TIÊN + TẢI TRỌNG RIÊNG (người dùng nhập)
+            var maxByType = new Dictionary<string, double>();
+            var typeKeys = new List<string>();
+            if (request.Containers != null && request.Containers.Count > 0)
+            {
+                foreach (var co in request.Containers)
+                {
+                    if (string.IsNullOrEmpty(co.Type)) continue;
+                    typeKeys.Add(co.Type);
+                    maxByType[co.Type] = co.MaxWeight;
+                }
+            }
+            else if (request.ContainerTypes != null && request.ContainerTypes.Count > 0)
+                typeKeys.AddRange(request.ContainerTypes);
+            else
+            {
+                typeKeys.Add(request.ContainerType);
+                if (!string.IsNullOrEmpty(request.SecondaryType)) typeKeys.Add(request.SecondaryType);
+            }
+            var types = new List<Container>();
+            foreach (var k in typeKeys)
+                if (!string.IsNullOrEmpty(k) && ContainerTypes.TryGetValue(k, out var ct)
+                    && !types.Any(t => t.Type == ct.Type))
+                    types.Add(ct);
+            if (types.Count == 0) types.Add(ContainerTypes["40hc"]);
+            var primary = types[0];
+
+            // Tải trọng tối đa cho mỗi loại: lấy giá trị người dùng nhập riêng cho loại đó;
+            // nếu không có thì dùng MaxWeightPerContainer chung; cuối cùng mới đến mặc định loại.
+            double MaxW(Container c)
+            {
+                if (maxByType.TryGetValue(c.Type ?? "", out var w) && w > 0) return w;
+                return request.MaxWeightPerContainer > 0 ? request.MaxWeightPerContainer : c.MaxWeight;
+            }
+            double Vol(Container c) => (double)c.Length * c.Width * c.Height;
 
             var palette = new[] { "#E74C3C","#3498DB","#2ECC71","#F39C12","#9B59B6","#1ABC9C","#E67E22","#34495E","#E91E63","#00BCD4" };
             int ci = 0;
@@ -159,7 +192,6 @@ namespace EasyCargo3D.Services
                 if (string.IsNullOrEmpty(item.Color) || item.Color == "#4A90D9")
                     item.Color = palette[ci++ % palette.Length];
 
-            // Expand từng pallet thành item riêng
             var expanded = new List<CargoItem>();
             foreach (var item in request.Items)
                 for (int q = 0; q < item.Quantity; q++)
@@ -172,9 +204,6 @@ namespace EasyCargo3D.Services
                     });
 
             int totalUnits = expanded.Count;
-
-            // Sắp giảm dần theo thể tích (to nhất xếp trước → lấp đầy tốt hơn)
-            // Ưu tiên thể tích vì mục tiêu là tối đa hóa không gian
             var sorted = expanded
                 .OrderByDescending(i => i.Length * i.Width * i.Height)
                 .ThenByDescending(i => i.Weight)
@@ -186,18 +215,34 @@ namespace EasyCargo3D.Services
 
             while (remaining.Count > 0 && safetyLimit-- > 0)
             {
-                // Xếp đầy 1 container — dùng Extreme Points toàn bộ (không chia góc)
-                // để tối đa hóa không gian, có kiểm soát tổng trọng lượng
-                var (packed, leftover) = PackFullGreedy(container, remaining, maxWeight);
+                // Thử xếp đầy 1 container loại CHÍNH
+                var (packedP, leftP) = PackFullGreedy(primary, remaining, MaxW(primary));
+                if (packedP.Count == 0) break;
 
-                if (packed.Count == 0) break; // không xếp được gì thêm
+                Container chosen = primary;
+                List<PackedItem> packed = packedP;
+                List<CargoItem> leftover = leftP;
+
+                // Nếu loại chính ĐÃ ĐẦY (còn dư) → cứ dùng loại chính (xếp đủ 40 trước).
+                // Nếu phần còn lại VỪA HẾT trong 1 container chính (lô cuối) → chọn loại
+                // NHỎ NHẤT trong các loại đã chọn mà vẫn chứa hết → tiết kiệm (qua 20).
+                if (leftP.Count == 0 && types.Count > 1)
+                {
+                    foreach (var t in types.Where(t => t.Type != primary.Type)
+                                           .OrderBy(Vol))
+                    {
+                        var (pk, lf) = PackFullGreedy(t, remaining, MaxW(t));
+                        if (lf.Count == 0 && pk.Count == remaining.Count && Vol(t) < Vol(chosen))
+                        { chosen = t; packed = pk; leftover = lf; }
+                    }
+                }
 
                 var planContainer = new Container
                 {
-                    Name      = $"{container.Name} #{plans.Count + 1}",
-                    Type      = container.Type,
-                    Length    = container.Length, Width = container.Width, Height = container.Height,
-                    MaxWeight = maxWeight
+                    Name      = $"{chosen.Name} #{plans.Count + 1}",
+                    Type      = chosen.Type,
+                    Length    = chosen.Length, Width = chosen.Width, Height = chosen.Height,
+                    MaxWeight = MaxW(chosen)
                 };
                 var plan = new LoadingPlan
                 {
@@ -267,6 +312,33 @@ namespace EasyCargo3D.Services
                         if (pz + iW > container.Width  + tol) continue;
                         if (Overlaps(packed, px, py, pz, iL, item.Height, iW)) continue;
 
+                        // ── RÀNG BUỘC XẾP CHỒNG 1-TRÊN-1 (cấm brick & cấm 2 cái đè lên 1) ──
+                        // Pallet tầng trên phải đặt trọn lên ĐÚNG 1 pallet bên dưới (phủ ≥85%),
+                        // không được gác lên 2 pallet (brick) cũng không thiếu đỡ (chìa ra).
+                        if (py > tol)
+                        {
+                            double baseArea = iL * iW;
+                            double bestCover = 0;   // diện tích đỡ của pallet đỡ chính
+                            double otherCover = 0;  // tổng diện tích đỡ của các pallet còn lại
+                            foreach (var p in packed)
+                            {
+                                if (Math.Abs(p.Y + p.Item.Height - py) > tol) continue; // mặt trên trùng đáy pallet
+                                double pL = (p.RotationY == 90) ? p.Item.Width : p.Item.Length;
+                                double pW = (p.RotationY == 90) ? p.Item.Length : p.Item.Width;
+                                double ox = Math.Min(px + iL, p.X + pL) - Math.Max(px, p.X);
+                                double oz = Math.Min(pz + iW, p.Z + pW) - Math.Max(pz, p.Z);
+                                if (ox > 0 && oz > 0)
+                                {
+                                    double area = ox * oz;
+                                    if (area > bestCover) { otherCover += bestCover; bestCover = area; }
+                                    else otherCover += area;
+                                }
+                            }
+                            // chỉ 1 pallet đỡ chính phủ ≥85%, không có pallet đỡ phụ đáng kể (≥10%)
+                            if (bestCover < baseArea * 0.85) continue;        // thiếu đỡ / không trọn 1 cái
+                            if (otherCover > baseArea * 0.10) continue;        // gác lên >1 pallet (brick) → cấm
+                        }
+
                         // ── Điểm 1: Cân bằng tải ──
                         double cx = px + iL / 2.0, cz = pz + iW / 2.0;
                         int zone = (cx <= midX ? 0 : 2) + (cz <= midZ ? 0 : 1);
@@ -275,38 +347,39 @@ namespace EasyCargo3D.Services
                         double fl = sim[0], fr = sim[1], bl = sim[2], br = sim[3];
                         double front = fl + fr, back = bl + br, left = fl + bl, right = fr + br;
                         double tot = front + back;
+                        // Cân ĐỀU CẢ trước/sau LẪN trái/phải (trọng số ngang nhau)
                         double balanceScore = tot > 0
-                            ? (Math.Abs(front - back) + Math.Abs(left - right)) / tot * 1000
+                            ? (Math.Abs(left - right) + Math.Abs(front - back)) / tot * 1000
                             : 0;
 
-                        // ── Điểm 2: Brick pattern ──
-                        // Đếm số item ngay bên dưới mà item này gác lên
-                        // ≥ 2 item dưới → brick (gác chéo lên 2 pallet) → ổn định
-                        // = 1 item dưới → thẳng cột → kém ổn định
-                        // = 0 item dưới (đặt sàn) → không tính
-                        double brickScore = 0;
-                        if (py > tol)
+                        double brickScore = 0; // đã cấm brick bằng ràng buộc cứng ở trên
+
+                        // ── Điểm 3: ưu tiên xếp THẤP trước (py), rồi nén gọn nhẹ theo X/Z ──
+                        double fillScore = py * 0.8 + px * 0.25 + pz * 0.25;
+
+                        // ── Điểm 4: Tiếp xúc (chống pallet đứng lẻ → ổn định khi đi tàu) ──
+                        // Đếm số mặt ngang chạm tường hoặc chạm pallet khác cùng tầng.
+                        // Càng nhiều mặt chạm → xếp càng khít → thưởng (trừ điểm).
+                        int contacts = 0;
+                        if (px <= tol) contacts++;                              // chạm tường -X
+                        if (px + iL >= container.Length - tol) contacts++;      // chạm tường +X
+                        if (pz <= tol) contacts++;                              // chạm tường -Z
+                        if (pz + iW >= container.Width  - tol) contacts++;      // chạm tường +Z
+                        foreach (var q in packed)
                         {
-                            int supportCount = packed.Count(p =>
-                            {
-                                double belowTop = p.Y + p.Item.Height;
-                                if (Math.Abs(belowTop - py) > tol) return false;
-                                double pItemL = (p.RotationY == 90) ? p.Item.Width : p.Item.Length;
-                                double pItemW = (p.RotationY == 90) ? p.Item.Length : p.Item.Width;
-                                bool overlapX = p.X < px + iL - tol && p.X + pItemL > px + tol;
-                                bool overlapZ = p.Z < pz + iW - tol && p.Z + pItemW > pz + tol;
-                                return overlapX && overlapZ;
-                            });
-                            // 1 support = xếp thẳng cột → phạt nặng
-                            // ≥ 2 support = brick → không phạt
-                            if (supportCount == 1) brickScore = 300;
-                            else if (supportCount == 0) brickScore = 0; // sàn ok
+                            if (Math.Abs(q.Y - py) > tol) continue;            // cùng tầng
+                            double qL = (q.RotationY == 90) ? q.Item.Width  : q.Item.Length;
+                            double qW = (q.RotationY == 90) ? q.Item.Length : q.Item.Width;
+                            bool zOverlap = q.Z < pz + iW - tol && q.Z + qW > pz + tol;
+                            bool xOverlap = q.X < px + iL - tol && q.X + qL > px + tol;
+                            // chạm mặt theo trục X (cạnh nhau trước/sau)
+                            if (zOverlap && (Math.Abs(q.X + qL - px) <= tol || Math.Abs(px + iL - q.X) <= tol)) contacts++;
+                            // chạm mặt theo trục Z (cạnh nhau trái/phải)
+                            if (xOverlap && (Math.Abs(q.Z + qW - pz) <= tol || Math.Abs(pz + iW - q.Z) <= tol)) contacts++;
                         }
+                        double contactScore = -contacts * 80;
 
-                        // ── Điểm 3: Ưu tiên thấp + sát tường (lấp đầy) ──
-                        double fillScore = py * 0.5 + px * 0.01 + pz * 0.01;
-
-                        double totalScore = balanceScore + brickScore + fillScore;
+                        double totalScore = balanceScore + brickScore + fillScore + contactScore;
                         if (totalScore < bestScore)
                         {
                             bestScore = totalScore;
@@ -332,6 +405,18 @@ namespace EasyCargo3D.Services
                 {
                     leftover.Add(item);
                 }
+            }
+
+            // ── Căn giữa khối hàng trong container (trước/sau & trái/phải) → cân đối tải ──
+            if (packed.Count > 0)
+            {
+                double DimL(PackedItem p) => (p.RotationY == 90) ? p.Item.Width : p.Item.Length;
+                double DimW(PackedItem p) => (p.RotationY == 90) ? p.Item.Length : p.Item.Width;
+                double minX = packed.Min(p => p.X), maxX = packed.Max(p => p.X + DimL(p));
+                double minZ = packed.Min(p => p.Z), maxZ = packed.Max(p => p.Z + DimW(p));
+                double shiftX = (container.Length - (maxX - minX)) / 2.0 - minX;
+                double shiftZ = (container.Width  - (maxZ - minZ)) / 2.0 - minZ;
+                foreach (var p in packed) { p.X += shiftX; p.Z += shiftZ; }
             }
 
             return (packed, leftover);
@@ -789,34 +874,47 @@ namespace EasyCargo3D.Services
                 yPlanes.Add(p.Y + p.Item.Height);
             }
 
+            // Không xếp gỗ trên nóc: giới hạn tại đỉnh tầng cao nhất của hàng thực
+            double maxCargoTop = existing.Where(p => !p.Item.IsWood)
+                                         .Select(p => p.Y + p.Item.Height)
+                                         .DefaultIfEmpty(0).Max();
+
             // Tất cả item đã có (pallet + gỗ sẽ được thêm dần)
             var allItems = existing.ToList();
 
+            // Cân bằng: tổng tải hiện tại theo 4 góc (FL,FR,BL,BR) để chèn gỗ cho đều
+            double midX = container.Length / 2.0, midZ = container.Width / 2.0;
+            var zoneTotal = new double[4];
+            foreach (var p in existing)
+            {
+                var (pL, pW) = Dims(p);
+                double cx = p.X + pL / 2.0, cz = p.Z + pW / 2.0;
+                zoneTotal[(cx <= midX ? 0 : 2) + (cz <= midZ ? 0 : 1)] += p.Item.Weight;
+            }
+
+            // Ứng viên 1 khối gỗ
+            var cands = new List<(double x, double y, double z, double L, double W, double H, double kg, int zone)>();
+
             foreach (double yFloor in yPlanes)
             {
-                // Bỏ qua nếu Y vượt trần
                 if (yFloor >= container.Height - MIN_GAP) continue;
-
-                // Không gian từ yFloor lên trần
+                if (yFloor >= maxCargoTop - tol) continue;
                 double maxFillH = container.Height - yFloor;
                 if (maxFillH < MIN_GAP) continue;
+                bool ground = yFloor < tol; // tầng sàn hay tầng trên (nằm trên pallet)
 
-                // Tập hợp ranh giới X và Z từ TẤT CẢ item có đáy hoặc đỉnh tại/gần yFloor
-                // + tất cả item tồn tại ở tầng này (để nén tọa độ đúng)
+                // Nén tọa độ X/Z từ các item cắt qua tầng yFloor
                 var xs = new SortedSet<double> { 0, container.Length };
                 var zs = new SortedSet<double> { 0, container.Width  };
-
                 foreach (var p in allItems)
                 {
                     var (pL, pW) = Dims(p);
-                    // Item chồng qua tầng yFloor: p.Y < yFloor+tol && p.Y+p.Item.Height > yFloor-tol
                     if (p.Y < yFloor + tol && p.Y + p.Item.Height > yFloor - tol)
                     {
                         xs.Add(p.X); xs.Add(p.X + pL);
                         zs.Add(p.Z); zs.Add(p.Z + pW);
                     }
                 }
-
                 var xList = xs.ToList();
                 var zList = zs.ToList();
 
@@ -832,8 +930,37 @@ namespace EasyCargo3D.Services
                         double cellW = z1 - z0;
                         if (cellW < MIN_GAP) continue;
 
-                        // Tính chiều cao gỗ có thể đặt tại ô này:
-                        // = khoảng thẳng đứng từ yFloor đến đáy item tiếp theo bên trên (hoặc đến trần)
+                        // Ở tầng SÀN: chỉ lấp ô trống KỀ SÁT ít nhất 1 pallet thực (để khóa pallet,
+                        // kể cả pallet đứng lẻ ở góc/sát tường). Bỏ qua ô sàn trống không kề pallet nào.
+                        if (ground)
+                        {
+                            bool touchesPallet = existing.Any(p =>
+                            {
+                                if (p.Item.IsWood || p.Y > tol) return false; // pallet thực ở tầng sàn
+                                var (pL, pW) = Dims(p);
+                                bool zOv = p.Z < z1 - tol && p.Z + pW > z0 + tol;
+                                bool xOv = p.X < x1 - tol && p.X + pL > x0 + tol;
+                                bool touchX = zOv && (Math.Abs(p.X + pL - x0) <= tol || Math.Abs(x1 - p.X) <= tol);
+                                bool touchZ = xOv && (Math.Abs(p.Z + pW - z0) <= tol || Math.Abs(z1 - p.Z) <= tol);
+                                return touchX || touchZ;
+                            });
+                            if (!touchesPallet) continue;
+                        }
+
+                        // Pallet đỡ ngay bên dưới ô (mặt trên trùng yFloor) → lấy chiều cao 1 tầng
+                        double supportH = 0; bool hasSupport = ground;
+                        foreach (var p in allItems)
+                        {
+                            var (pL, pW) = Dims(p);
+                            if (Math.Abs(p.Y + p.Item.Height - yFloor) > tol) continue;
+                            bool ox = p.X < x1 - tol && p.X + pL > x0 + tol;
+                            bool oz = p.Z < z1 - tol && p.Z + pW > z0 + tol;
+                            if (ox && oz) { hasSupport = true; supportH = Math.Max(supportH, p.Item.Height); }
+                        }
+                        if (!hasSupport) continue;          // tầng trên phải nằm trên pallet
+                        if (!ground && supportH < MIN_GAP) continue;
+
+                        // Khoảng cách thẳng đứng tới item kế trên (nếu có)
                         double ceilH = maxFillH;
                         foreach (var p in allItems)
                         {
@@ -841,46 +968,54 @@ namespace EasyCargo3D.Services
                             bool overX = p.X < x1 - tol && p.X + pL > x0 + tol;
                             bool overZ = p.Z < z1 - tol && p.Z + pW > z0 + tol;
                             if (!overX || !overZ) continue;
-                            // Item nằm bên trên yFloor
                             double gap = p.Y - yFloor;
                             if (gap > tol && gap < ceilH) ceilH = gap;
                         }
 
-                        double fillH = Math.Min(ceilH, maxFillH);
+                        // Chiều cao khối gỗ = 1 tầng pallet (tầng trên) hoặc tới đỉnh hàng (tầng sàn)
+                        double fillH = ground ? Math.Min(ceilH, maxCargoTop - yFloor)
+                                              : Math.Min(ceilH, supportH);
+                        fillH = Math.Min(fillH, container.Height - yFloor);
                         if (fillH < MIN_GAP) continue;
-
-                        // Kiểm tra ô này đã bị chiếm chưa (có item nào đặt chính xác ở đây)
                         if (Overlaps(allItems, x0, yFloor, z0, cellL, fillH, cellW)) continue;
 
-                        // Phải có chỗ đỡ bên dưới (sàn hoặc mặt trên của item)
-                        bool hasSupport = yFloor < tol ||
-                            allItems.Any(p =>
-                            {
-                                var (pL, pW) = Dims(p);
-                                if (Math.Abs(p.Y + p.Item.Height - yFloor) > tol) return false;
-                                bool ox = p.X < x1 - tol && p.X + pL > x0 + tol;
-                                bool oz = p.Z < z1 - tol && p.Z + pW > z0 + tol;
-                                return ox && oz;
-                            });
-                        if (!hasSupport) continue;
-
-                        double woodKg = cellL * cellW * fillH * DENSITY;
-                        if (usedWt + woodKg > maxWoodWeight) continue;
-
-                        var woodItem = new CargoItem
-                        {
-                            Name   = "Gỗ chèn",
-                            Length = cellL, Width = cellW, Height = fillH,
-                            Weight = Math.Round(woodKg, 2),
-                            Color  = "#8B5E3C",
-                            IsWood = true
-                        };
-                        var wp = new PackedItem { Item = woodItem, X = x0, Y = yFloor, Z = z0 };
-                        wood.Add(wp);
-                        allItems.Add(wp); // cập nhật ngay để ô kề không bị đặt chồng
-                        usedWt += woodKg;
+                        double kg = cellL * cellW * fillH * DENSITY;
+                        double cx = x0 + cellL / 2.0, cz = z0 + cellW / 2.0;
+                        int zone = (cx <= midX ? 0 : 2) + (cz <= midZ ? 0 : 1);
+                        cands.Add((x0, yFloor, z0, cellL, cellW, fillH, kg, zone));
                     }
                 }
+            }
+
+            // Lấp gỗ theo thứ tự ưu tiên VÙNG ĐANG NHẸ NHẤT → phân bổ đều 4 góc
+            // (chọn lại mỗi vòng vì zoneTotal thay đổi)
+            var remaining = new List<(double x, double y, double z, double L, double W, double H, double kg, int zone)>(cands);
+            while (remaining.Count > 0)
+            {
+                // ưu tiên vùng nhẹ nhất, trong vùng đó lấp khối lớn trước
+                remaining.Sort((a, b) =>
+                {
+                    int c = zoneTotal[a.zone].CompareTo(zoneTotal[b.zone]);
+                    return c != 0 ? c : b.kg.CompareTo(a.kg);
+                });
+                var cd = remaining[0];
+                remaining.RemoveAt(0);
+                if (usedWt + cd.kg > maxWoodWeight) continue;             // quá tải → bỏ ô này, thử ô khác
+                if (Overlaps(allItems, cd.x, cd.y, cd.z, cd.L, cd.H, cd.W)) continue;
+
+                var woodItem = new CargoItem
+                {
+                    Name = "Gỗ chèn",
+                    Length = cd.L, Width = cd.W, Height = cd.H,
+                    Weight = Math.Round(cd.kg, 2),
+                    Color = "#8B5E3C",
+                    IsWood = true
+                };
+                var wp = new PackedItem { Item = woodItem, X = cd.x, Y = cd.y, Z = cd.z };
+                wood.Add(wp);
+                allItems.Add(wp);
+                usedWt += cd.kg;
+                zoneTotal[cd.zone] += cd.kg;
             }
 
             return wood;

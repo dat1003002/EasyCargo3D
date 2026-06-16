@@ -58,5 +58,12 @@ namespace EasyCargo3D.Controllers
 
         [HttpGet]
         public IActionResult GetContainers() => Json(PackingService.GetContainerTypes());
+
+        [Microsoft.AspNetCore.Authorization.AllowAnonymous]
+        [ResponseCache(Duration = 0, Location = ResponseCacheLocation.None, NoStore = true)]
+        public IActionResult Error() => View(new ErrorViewModel
+        {
+            RequestId = System.Diagnostics.Activity.Current?.Id ?? HttpContext.TraceIdentifier
+        });
     }
 }
